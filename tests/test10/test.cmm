@@ -1,0 +1,8 @@
+void test() {
+    x: float;
+    x = 5 / 0;
+}
+
+void main() {
+    test();
+}

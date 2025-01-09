@@ -1,0 +1,7 @@
+void test() {
+    write("Hello, World!\n");
+}
+
+void main() {
+    test();
+}

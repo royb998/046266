@@ -1,0 +1,9 @@
+void test() {
+    x: int;
+    x = 5;
+    x: float;
+}
+
+void main() {
+    test();
+}

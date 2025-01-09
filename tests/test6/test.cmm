@@ -1,0 +1,16 @@
+int test(i: int) {
+    x: int;
+    x = 0;
+    while (i > 0) do {
+        x = x + i;
+        i = i - 1;
+    }
+    return x;
+}
+
+void main() {
+    i, res: int;
+    read(i);
+    res = test(i);
+    write(res);
+}
