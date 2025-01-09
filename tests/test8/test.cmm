@@ -1,8 +1,13 @@
-float test(n: int, ...) {
-    if (n > 0) then {
-        x = (float)n + va_arg(float, n - 1);
+float test(n:int, ...) {
+    i: int;
+    sum: float;
+    i = 0;
+    sum = 0.0;
+    while i < n do {
+        sum = sum + va_arg(float, i);
+        i = i + 1;
     }
-    return x;
+    return sum;
 }
 
 void main() {
