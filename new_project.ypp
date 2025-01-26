@@ -1,0 +1,1343 @@
+%{
+
+#include <iostream>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <vector>
+#include <string>
+#include <map>
+#include "part3_helpers.hpp" 
+
+#define DEBUG_PARSER 1
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#if defined(FLEX_SCANNER) || defined(FLEXPP_SCANNER)
+extern int yylex_destroy(void);
+#else
+#define yylex_destroy() (0)
+#endif
+
+#ifdef __cplusplus
+}
+#endif
+
+int printOperationalError (string err);
+int printSemanticError(string err);
+
+typedef yystype YYSTYPE;  
+extern int yylineno;
+extern char* yytext;
+int yylex(void);
+void yyerror(const char *s);
+
+// Global variables
+extern Buffer* buffer;
+extern map<string, Symbol> symbolTable;
+extern map<string, Function> functionTable;
+int currentScopeRegsNum = 3;
+int currentScopeOffset = 0;
+Type currentReturnType;
+bool inVariadicFunction = false;
+
+//ParserNode *parseTree = NULL;
+
+%}
+
+/*%union {
+    yystype yystype;  // Use the struct isDefined in part3_helpers.hpp
+}*/
+
+/* Keywords and operators */
+%token  INT FLOAT VOID
+%token  RETURN WRITE READ
+%token  WHILE IF THEN ELSE DO
+%token  ASSIGN VA_ARG ELLIPSIS 
+%token  OR AND NOT
+%token  ID INTEGERNUM REALNUM STRING_LITERAL RELOP ADDOP MULOP
+%token  COMMA SEMICOLON LPAREN RPAREN LBRACE RBRACE COLON
+
+/* Operator precedence and associativity */
+%right ASSIGN
+%right IF THEN ELSE
+%left OR
+%left AND
+%left RELOP
+%left ADDOP
+%left MULOP
+%right NOT
+%left LPAREN
+%left RPAREN
+%left LBRACE
+%left RBRACE
+%left COLON
+%left SEMICOLON
+
+/* Non-terminal types 
+%type  PROGRAM FDEFS FUNC_DEC_API FUNC_DEF_API FUNC_ARGLIST
+%type  DCL STLIST STMT ASSN_STMT LVAL CNTRL_STMT
+%type  BEXP EXP CALL CALL_ARGS CALL_ARGLIST
+%type  NUM VA_MATERIALISE BLK RETURN_STMT WRITE_STMT READ_STMT TYPE
+%type  M N
+%start PROGRAM*/
+
+%%
+
+PROGRAM:  
+    FDEFS
+    {
+        #if DEBUG_PARSER
+        cerr << "PROGRAM: Finished parsing FDEFS." << endl;
+        #endif
+        // Backpatch function calls
+        for(auto& func : functionTable) {
+            buffer->backpatch(func.second.callingLines, func.second.startLineImplementation);
+        }
+        
+        // Add HALT AFTER all functions
+        //buffer->emit("HALT"); 
+    }
+    ;
+
+FDEFS:    
+    FDEFS FUNC_DEF_API BLK 
+    {
+        #if DEBUG_PARSER
+        cerr << "FDEFS: FDEFS FUNC_DEF_API BLK" << endl;
+        #endif
+        // Backpatch function calls
+        for(auto& func : functionTable) {
+            buffer->backpatch(func.second.callingLines, func.second.startLineImplementation);
+        }
+        
+        // Emit RETRN at the end of the function
+        buffer->emit("RETRN");
+
+		// Initialize the relevant globals 
+		currentScopeRegsNum = 3;
+		currentScopeOffset = 0;
+		symbolTable.clear();
+		$2.paramTypes.clear();
+        inVariadicFunction = false;
+    }
+    | FDEFS FUNC_DEC_API
+    {
+        #if DEBUG_PARSER
+        cerr << "FDEFS: FDEFS FUNC_DEC_API" << endl;
+        #endif
+		if (functionTable[$2.name].startLineImplementation != -1) {
+			printSemanticError("function '" + $2.name + "' already isDefined");
+		}
+        functionTable[$2.name].startLineImplementation = -1;
+        functionTable[$2.name].callingLines.clear();
+        symbolTable.clear();
+    }
+    | /* empty */ { }
+    ;
+    
+FUNC_DEC_API:
+    TYPE ID LPAREN RPAREN SEMICOLON
+    {
+        #if DEBUG_PARSER
+        cerr << "FUNC_DEF_API: TYPE ID LPAREN RPAREN SEMICOLON" << endl;
+        #endif
+        $$.name = $2.name;
+        $$.type = $1.type;
+        $$.quad = buffer->nextQuad();
+
+        if (functionTable.find($2.name) != functionTable.end()) {
+            Function& existingFunc = functionTable[$2.name];
+            if (existingFunc.returnType != $1.type) {
+                printSemanticError("conflicting return type for function declaration '" + $2.name + "'");
+            }
+            if (!existingFunc.paramTypes.empty()) {
+                printSemanticError("conflicting parameter types for function declaration '" + $2.name + "'");
+            }
+        } else {
+            Function newFunc;
+            newFunc.returnType = $1.type;
+            newFunc.startLineImplementation = -1;
+            newFunc.isDefined = false; // Mark as NOT isDefined for declaration
+            functionTable.insert(std::pair<string,Function>($2.name, newFunc));
+        }
+    }
+    | TYPE ID LPAREN M FUNC_ARGLIST RPAREN SEMICOLON
+    {
+        #if DEBUG_PARSER
+        cerr << "FUNC_DEF_API: TYPE ID LPAREN M FUNC_ARGLIST RPAREN SEMICOLON" << endl;
+        for (size_t i = 0; i < $4.paramTypes.size(); ++i) {
+            cerr << "    Arg " << i << ": " << $4.paramIds[i] << " (type " << $4.paramTypes[i] << ")" << endl; 
+        }
+        #endif
+        $$.name = $2.name;
+        $$.type = $1.type;
+        $$.paramTypes = $4.paramTypes;
+        $$.paramIds = $4.paramIds;
+        $$.quad = buffer->nextQuad();
+
+        if (functionTable.find($2.name) != functionTable.end()) {
+            Function& existingFunc = functionTable[$2.name];
+            if (existingFunc.returnType != $1.type) {
+                printSemanticError("conflicting return type for function declaration '" + $2.name + "'");
+            }
+            if (existingFunc.paramTypes != $4.paramTypes) {
+                printSemanticError("conflicting parameter types for function declaration '" + $2.name + "'");
+            }
+        } else {
+            Function newFunc;
+            newFunc.returnType = $1.type;
+            newFunc.paramTypes = $4.paramTypes;
+            newFunc.paramIds = $4.paramIds;
+            newFunc.startLineImplementation = -1;
+            newFunc.isDefined = false; // Mark as NOT isDefined for declaration
+            functionTable.insert(std::pair<string,Function>($2.name, newFunc));
+        }
+    }
+    | TYPE ID LPAREN FUNC_ARGLIST COMMA ELLIPSIS RPAREN SEMICOLON
+    {
+        #if DEBUG_PARSER
+        cerr << "TYPE ID LPAREN FUNC_ARGLIST COMMA ELLIPSIS RPAREN SEMICOLON" << endl;
+        #endif
+        $$.name = $2.name;
+        $$.type = $1.type;
+        $$.paramTypes = $4.paramTypes;
+        $$.paramIds = $4.paramIds;
+        $$.quad = buffer->nextQuad();
+
+        if (functionTable.find($2.name) != functionTable.end()) {
+            Function& existingFunc = functionTable[$2.name];
+            if (existingFunc.returnType != $1.type) {
+                printSemanticError("conflicting return type for variadic function declaration '" + $2.name + "'");
+            }
+            if (existingFunc.paramTypes != $4.paramTypes) {
+                printSemanticError("conflicting parameter types for variadic function declaration '" + $2.name + "'");
+            }
+
+        } else {
+            Function newFunc;
+            newFunc.returnType = $1.type;
+            newFunc.paramTypes = $4.paramTypes;
+            newFunc.paramIds = $4.paramIds;
+            newFunc.startLineImplementation = -1;
+            newFunc.isDefined = false; // Mark as NOT isDefined for declaration
+            functionTable.insert(std::pair<string,Function>($2.name, newFunc));
+        }
+    }
+    ;
+
+FUNC_DEF_API:
+    TYPE ID LPAREN RPAREN
+    {
+        #if DEBUG_PARSER
+        cerr << "FUNC_DEF_API: TYPE ID LPAREN RPAREN" << endl;
+        #endif
+        $$.name = $2.name;
+        $$.type = $1.type;
+        $$.quad = buffer->nextQuad();
+
+        cerr << "--- FUNC_DEF_API Processing for function: " << $2.name << " ---" << endl; 
+        cerr << "Before functionTable.find('" << $2.name << "')" << endl; 
+        cerr << "functionTable.size(): " << functionTable.size() << endl; // DEBUG: Table size
+        //cerr << "definedFunctions.size(): " << definedFunctions.size() << endl; // DEBUG: Set size
+
+        if ($2.name == "main" && $1.type != void_t) {
+            printSemanticError("main function must return void");
+        }
+
+        cerr << "Before functionTable.find('" << $2.name << "')" << endl;
+        if (functionTable.find($2.name) != functionTable.end()) {
+            Function& existingFunc = functionTable[$2.name];
+            cerr << "Function '" << $2.name << "' FOUND in functionTable." << endl; 
+            cerr << "existingFunc.startLineImplementation: " << existingFunc.startLineImplementation << endl; 
+            cerr << "existingFunc.defined: " << existingFunc.isDefined << endl; // DEBUG: defined flag value
+            if (existingFunc.isDefined == true) {
+                cerr << "*** Redefinition check triggered! ***" << endl;
+                printSemanticError("2redefinition of function '" + $2.name + "'");
+            } else {
+                cerr << "Function was declared, now defining." << endl;
+                existingFunc.startLineImplementation = buffer->nextQuad();
+                existingFunc.isDefined = true;
+            }
+        } else {
+            cerr << "Function '" << $2.name << "' NOT found in functionTable. Creating new entry." << endl;
+            Function newFunc;
+            newFunc.returnType = $1.type;
+            newFunc.startLineImplementation = $$.quad;
+            newFunc.isDefined = true; // Mark as isDefined when first isDefined!
+            functionTable.insert(std::pair<string,Function>($2.name, newFunc));
+            cerr << "functionTable.size() AFTER insert: " << functionTable.size() << endl; // DEBUG: Table size after insert
+            //cerr << "definedFunctions.size() AFTER insert: " << definedFunctions.size() << endl; // DEBUG: Set size after insert
+
+            cerr << "New function '" << $2.name << "' added to functionTable." << endl;
+            cerr << "newFunc.startLineImplementation set to: " << newFunc.startLineImplementation << endl;
+            cerr << "functionTable['" << $2.name << "'].startLineImplementation: " << functionTable[$2.name].startLineImplementation << endl;
+        }
+         cerr << "--- FUNC_DEF_API Processing END for function: " << $2.name << " ---" << endl;
+    }
+    | TYPE ID LPAREN FUNC_ARGLIST RPAREN
+    {
+        #if DEBUG_PARSER
+        cerr << "FUNC_DEF_API: TYPE ID LPAREN FUNC_ARGLIST RPAREN" << endl;
+        #endif
+        $$.name = $2.name;
+        $$.type = $1.type;
+        $$.paramTypes = $4.paramTypes;
+        $$.paramIds = $4.paramIds;
+        $$.quad = buffer->nextQuad();
+
+        if (functionTable.find($2.name) != functionTable.end()) {
+            Function& existingFunc = functionTable[$2.name];
+            if (existingFunc.isDefined == true) {
+                printSemanticError("3redefinition of function '" + $2.name + "'");
+            } else {
+                existingFunc.startLineImplementation = buffer->nextQuad();
+                existingFunc.isDefined = true;
+            }
+        } else {
+            Function newFunc;
+            newFunc.isDefined = true;
+            newFunc.returnType = $1.type;
+            newFunc.paramTypes = $4.paramTypes;
+            newFunc.paramIds = $4.paramIds;
+            newFunc.startLineImplementation = buffer->nextQuad();
+            functionTable.insert(std::pair<string,Function>($2.name, newFunc));
+        }
+    }
+    | TYPE ID LPAREN FUNC_ARGLIST COMMA ELLIPSIS RPAREN
+    {
+        #if DEBUG_PARSER
+        cerr << "FUNC_DEF_API: TYPE ID LPAREN FUNC_ARGLIST COMMA ELLIPSIS RPAREN" << endl;
+        #endif
+        $$.name = $2.name;
+        $$.type = $1.type;
+        $$.paramTypes = $4.paramTypes;
+        $$.paramIds = $4.paramIds;
+        $$.quad = buffer->nextQuad();
+
+        if (functionTable.find($2.name) != functionTable.end()) {
+            Function& existingFunc = functionTable[$2.name];
+             if (existingFunc.isDefined == true) {
+                printSemanticError("4redefinition of function '" + $2.name + "'");
+            } else {
+                existingFunc.startLineImplementation = buffer->nextQuad();
+                existingFunc.isDefined = true;
+            }
+        } else {
+            Function newFunc;
+            newFunc.isDefined = true;
+            newFunc.returnType = $1.type;
+            newFunc.paramTypes = $4.paramTypes;
+            newFunc.paramIds = $4.paramIds;
+            functionTable.insert(std::pair<string,Function>($2.name, newFunc));
+        }
+    }
+    ;
+
+FUNC_ARGLIST:
+    FUNC_ARGLIST COMMA DCL
+    {
+        #if DEBUG_PARSER
+        cerr << "FUNC_ARGLIST: FUNC_ARGLIST COMMA DCL" << endl;
+        #endif
+        #if DEBUG_PARSER
+        cerr << "FUNC_ARGLIST: Processed argument list." << endl;
+        for (size_t i = 0; i < $$.paramTypes.size(); ++i) {
+            cerr << "    Arg " << i << ": " << $$.paramIds[i] << " (type " << $$.paramTypes[i] << ")" << endl;
+        }
+        #endif
+        $$.paramTypes = $1.paramTypes;
+        $$.paramTypes.push_back($3.type);
+        $$.paramIds = $1.paramIds;
+        $$.paramIds.push_back($3.name);
+        $$.quad = buffer->nextQuad();
+    }
+    | DCL
+    {
+        #if DEBUG_PARSER
+        cerr << "FUNC_ARGLIST: DCL" << endl; // Add debug print here
+        #endif
+        $$.paramTypes.push_back($1.type);
+        $$.paramIds.push_back($1.name);
+        $$.quad = buffer->nextQuad();
+    }
+    ;
+
+BLK:
+    LBRACE STLIST M RBRACE
+    {
+        #if DEBUG_PARSER
+        cerr << "BLK: LBRACE STLIST M RBRACE" << endl; // Add debug print here
+        #endif
+        $$.quad = $2.quad;
+        // Reset scope after block ends
+        //currentScopeRegsNum = 3;  // Reset register allocation
+        // Don't clear symbol table here - only clear at function level
+        //buffer->emit(string("RETRN")); // Moved RETRN emission to the end of BLK rule
+    }
+    ;
+
+DCL:
+    ID COLON TYPE
+    {
+        #if DEBUG_PARSER
+        cerr << "DCL: ID COLON TYPE" << endl;
+        #endif
+        $$.name = $1.name;
+        $$.type = $3.type;
+        $$.quad = buffer->nextQuad();
+
+        // Check redeclaration
+        if (symbolTable.find($1.name) != symbolTable.end() &&
+            symbolTable[$1.name].type.find(currentScopeOffset) != symbolTable[$1.name].type.end()) {
+            printSemanticError("redefinition of variable '" + $1.name + "'");
+        }
+
+        // Allocate one register to hold this variable's *base address*
+        //$$.RegNum = currentScopeRegsNum++;
+
+        // Current offset
+        int varOffset = currentScopeOffset;
+
+        buffer->emit("ADD2I I2 I2 4");
+        
+        // "I1" = frame pointer. We do: baseReg = I1 + varOffset
+        //buffer->emit("ADD2I I" + to_string($$.RegNum) + " I1 " + to_string(varOffset));
+
+        /*
+        // Optionally initialize memory to 0 or 0.0
+        int initReg = currentScopeRegsNum++;
+        if ($3.type == int_) {
+            buffer->emit("COPYI I" + to_string(initReg) + " 0");
+            buffer->emit("STORI I" + to_string(initReg) + " I" + to_string($$.RegNum) + " 0");
+        } else if ($3.type == float_) {
+            buffer->emit("COPYF F" + to_string(initReg) + " 0.0");
+            buffer->emit("STORF F" + to_string(initReg) + " I" + to_string($$.RegNum) + " 0");
+        }
+        // else void_t => error if we allow? Already checked above or in printSemanticError
+        */
+
+        // Update symbol table
+        Symbol newSymbol;
+        newSymbol.type[currentScopeOffset] = $3.type;
+        newSymbol.offset[currentScopeOffset] = varOffset;
+        newSymbol.depth = currentScopeOffset;
+
+        symbolTable[$1.name] = newSymbol;
+
+        currentScopeOffset += 4;
+    }
+    | ID COMMA DCL
+    {
+        #if DEBUG_PARSER
+        cerr << "ID COMMA DCL" << endl;
+        #endif
+        $$.name = $1.name;
+        $$.type = $3.type; 
+        $$.quad = buffer->nextQuad();
+
+        // Check redeclaration
+        if (symbolTable.find($1.name) != symbolTable.end() &&
+            symbolTable[$1.name].type.find(currentScopeOffset) != symbolTable[$1.name].type.end()) {
+            printSemanticError("redefinition of variable '" + $1.name + "'");
+        }
+
+        buffer->emit("ADD2I I2 I2 4");
+
+        Symbol newSymbol;
+        newSymbol.type[currentScopeOffset] = $3.type;
+        newSymbol.offset[currentScopeOffset] = currentScopeOffset;
+        newSymbol.depth = currentScopeOffset;
+
+        // Allocate register for address calculation (REMOVE baseReg)
+        //int addrReg = currentScopeRegsNum++;
+        //buffer->emit("ADD2I I" + to_string(addrReg) + " I1 " + to_string(currentScopeOffset));
+
+        /*
+        // Initialize variable
+        int initReg = currentScopeRegsNum++;
+        if ($3.type == float_) {
+            buffer->emit("COPYF F" + to_string(initReg) + " 0.0");
+            buffer->emit("STORF F" + to_string(initReg) + " I" + to_string(addrReg) + " 0");
+        } else {
+            buffer->emit("COPYI I" + to_string(initReg) + " 0");
+            buffer->emit("STORI I" + to_string(initReg) + " I" + to_string(addrReg) + " 0");
+        }
+        */
+
+        symbolTable[$1.name] = newSymbol;
+        currentScopeOffset += 4;
+        //$$.RegNum = addrReg; // Use addrReg directly
+    }
+    ;
+
+TYPE:
+    INT
+    {
+        #if DEBUG_PARSER
+        cerr << "TYPE: INT" << endl;
+        #endif
+        $$.type = int_;
+        $$.quad = buffer->nextQuad();
+    }
+    | FLOAT 
+    {
+        #if DEBUG_PARSER
+        cerr << "TYPE: FLOAT" << endl;
+        #endif
+        $$.type = float_;
+        $$.quad = buffer->nextQuad();
+    }
+    | VOID
+    {
+        #if DEBUG_PARSER
+        cerr << "TYPE: VOID" << endl;
+        #endif
+        $$.type = void_t;
+        $$.quad = buffer->nextQuad();
+    }
+    ;
+
+STLIST:
+    STLIST STMT
+    {
+        #if DEBUG_PARSER
+        cerr << "STLIST: STLIST STMT" << endl;
+        #endif
+        $$.quad = $2.quad;  // Pass up the quad of the last statement
+        $$.nextList = $2.nextList;  // Pass up any unresolved jumps
+    }
+    | /* empty */
+    {
+        #if DEBUG_PARSER
+        cerr << "STLIST: empty" << endl;
+        #endif
+        $$.quad = buffer->nextQuad();
+        $$.nextList.clear();  // Initialize empty nextList
+    }
+    ;
+
+STMT:
+    DCL SEMICOLON
+    {
+        #if DEBUG_PARSER
+        cerr << "STMT: DCL SEMICOLON" << endl;
+        #endif
+        $$.quad = $1.quad;
+        $$.type = $1.type;
+        $$.nextList.clear();
+    }
+    | ASSN_STMT      
+    { 
+        #if DEBUG_PARSER
+        cerr << "STMT: ASSN_STMT" << endl;
+        #endif
+        $$.quad = $1.quad;
+        $$.type = $1.type;
+        $$.nextList = $1.nextList;
+    }
+    | EXP SEMICOLON
+    {
+        #if DEBUG_PARSER
+        cerr << "STMT: EXP SEMICOLON" << endl;
+        #endif
+        $$.quad = $1.quad;
+        $$.type = $1.type;
+        $$.nextList.clear();
+    }
+    | CNTRL_STMT     
+    {
+        #if DEBUG_PARSER
+        cerr << "STMT: CNTRL_STMT" << endl;
+        #endif
+        $$.quad = $1.quad;
+        $$.nextList = $1.nextList;
+    }
+    | READ_STMT
+    {
+        #if DEBUG_PARSER
+        cerr << "STMT: READ_STMT" << endl;
+        #endif
+        $$.quad = $1.quad;
+        $$.nextList.clear(); 
+    }
+    | WRITE_STMT     
+    {
+        #if DEBUG_PARSER
+        cerr << "STMT: WRITE_STMT" << endl;
+        #endif
+        $$.quad = $1.quad;
+        $$.nextList.clear();
+    }
+    | RETURN_STMT    
+    {
+        #if DEBUG_PARSER
+        cerr << "STMT: RETURN_STMT" << endl;
+        #endif
+        $$.quad = $1.quad;
+        $$.nextList.clear();
+        
+        if (!functionTable.empty()) {
+            string currentFunc = ""; 
+            for (auto& pair : functionTable) {
+                if (pair.second.startLineImplementation != -1) {
+                    currentFunc = pair.first;
+                    break;
+                }
+            }
+            
+            if (!currentFunc.empty()) {
+                if ($1.type != functionTable[currentFunc].returnType) {
+                    printSemanticError("return type mismatch in function '" + currentFunc + "'");
+                }
+            }
+        }
+    }
+    | BLK            
+    {
+        #if DEBUG_PARSER
+        cerr << "STMT: BLK" << endl;
+        #endif
+        $$.quad = $1.quad;
+        $$.nextList = $1.nextList;
+    }
+    ;
+
+RETURN_STMT:
+    RETURN EXP SEMICOLON
+    {
+        #if DEBUG_PARSER
+        cerr << "RETURN_STMT: RETURN EXP SEMICOLON" << endl;
+        #endif
+        $$.quad = buffer->nextQuad();
+        $$.type = $2.type;  // Use $$ to set the type
+        
+        if ($2.type == float_) {
+            buffer->emit(string("COPYF F0 F") + to_string($2.RegNum));  // Copy result to F0
+        } else {
+            buffer->emit(string("COPYI I0 I") + to_string($2.RegNum));  // Copy result to I0
+        }
+        buffer->emit(string("RETRN"));
+    }
+    | RETURN SEMICOLON
+    {
+        #if DEBUG_PARSER
+        cerr << "RETURN_STMT: RETURN SEMICOLON" << endl;
+        #endif
+        $$.quad = buffer->nextQuad();
+        $$.type = void_t;      
+        buffer->emit(string("RETRN")); 
+    }
+    ;
+
+WRITE_STMT:
+    WRITE LPAREN EXP RPAREN SEMICOLON
+    {
+        #if DEBUG_PARSER
+        cerr << "WRITE_STMT: WRITE LPAREN EXP RPAREN SEMICOLON" << endl;
+        #endif
+        $$.quad = buffer->nextQuad();
+        
+        if ($3.type == float_) {
+            buffer->emit(string("PRNTF F") + to_string($3.RegNum));
+        } else if ($3.type == int_) {
+            buffer->emit(string("PRNTI I") + to_string($3.RegNum));
+        } else {
+            printSemanticError("invalid type for write statement");
+        }
+    }
+    | WRITE LPAREN STRING_LITERAL RPAREN SEMICOLON
+    {
+        #if DEBUG_PARSER
+        cerr << "WRITE_STMT: WRITE LPAREN STRING_LITERAL RPAREN SEMICOLON" << endl;
+        #endif
+        string str = $3.name;
+        str = str.substr(1, str.length() - 2); // Remove surrounding quotes
+        
+        for (size_t i = 0; i < str.length(); i++) {
+            if (str[i] == '\\') {
+                // Handle escape sequences
+                if (i+1 >= str.length()) break;
+                i++; // Skip backslash
+                
+                switch(str[i]) {
+                    case 'n':  // Newline
+                        buffer->emit("PRNTC 10");
+                        break;
+                    case '"':  // Handle escaped quotes
+                        buffer->emit("PRNTC 34");
+                        break;
+                    case '\\': // Backslash
+                        buffer->emit("PRNTC 92");
+                        break;
+                    default:   // Unknown escape
+                        buffer->emit("PRNTC " + to_string((int)str[i]));
+                }
+            } else {
+                // Regular character
+                buffer->emit("PRNTC " + to_string((int)str[i]));
+            }
+        }
+    }
+    ;
+
+READ_STMT:
+    READ LPAREN LVAL RPAREN SEMICOLON
+    {
+        #if DEBUG_PARSER
+        cerr << "READ_STMT: READ LPAREN LVAL RPAREN SEMICOLON" << endl;
+        #endif
+        Symbol& sym = symbolTable[$3.name];
+        int offset = sym.offset[sym.depth];
+        int addrReg = currentScopeRegsNum++;
+        buffer->emit("ADD2I I" + to_string(addrReg) + " I1 " + to_string(offset));
+
+        // Use sym.type instead of varType
+        if (sym.type[sym.depth] == float_) {
+            int tempReg = currentScopeRegsNum++;
+            buffer->emit("READF F" + to_string(tempReg));
+            buffer->emit("STORF F" + to_string(tempReg) + " I" + to_string(addrReg) + " 0");
+        } else {
+            int tempReg = currentScopeRegsNum++;
+            buffer->emit("READI I" + to_string(tempReg));
+            buffer->emit("STORI I" + to_string(tempReg) + " I" + to_string(addrReg) + " 0");
+        }
+    }
+;
+
+ASSN_STMT:
+    LVAL ASSIGN EXP SEMICOLON
+    {
+        #if DEBUG_PARSER
+        cerr << "ASSN_STMT: LVAL ASSIGN EXP SEMICOLON" << endl;
+        #endif
+        $$.quad = buffer->nextQuad();
+
+        Symbol& sym = symbolTable[$1.name];
+        Type lvalType = sym.type[sym.depth];
+        Type expType = $3.type;
+
+        if (lvalType == void_t || expType == void_t) {
+            printSemanticError("void type in assignment");
+        }
+
+        // $$: 'LVAL' has a register pointing to that var's memory
+        int destBase = $1.RegNum;
+        int valReg   = $3.RegNum;
+
+        // If float-lval
+        if (lvalType == float_) {
+            if (expType == float_) {
+                buffer->emit("STORF F" + to_string(valReg) + " I" + to_string(destBase) + " 0");
+            } else { // int->float
+                int newReg = currentScopeRegsNum++;
+                buffer->emit("STOREI2F I" + to_string(valReg) + " F" + to_string(newReg));
+                buffer->emit("STORF F" + to_string(newReg) + " I" + to_string(destBase) + " 0");
+            }
+        } 
+        // else int-lval
+        else {
+            if (expType == int_) {
+                buffer->emit("STORI I" + to_string(valReg) + " I" + to_string(destBase) + " 0");
+            } else { // float->int
+                int newReg = currentScopeRegsNum++;
+                buffer->emit("STOREF2I F" + to_string(valReg) + " I" + to_string(newReg));
+                buffer->emit("STORI I" + to_string(newReg) + " I" + to_string(destBase) + " 0");
+            }
+        }
+
+        $$.type = lvalType;
+        $$.RegNum = destBase;
+    }
+    ;
+
+LVAL:
+    ID
+    {
+        #if DEBUG_PARSER
+        cerr << "LVAL: ID" << endl;
+        #endif
+        $$.name = $1.name;
+        $$.quad = buffer->nextQuad();
+        
+        if (symbolTable.find($1.name) == symbolTable.end()) {
+            printSemanticError("undefined variable '" + $1.name + "'");
+        } else {
+            Symbol& sym = symbolTable[$1.name];
+            if (sym.type.find(sym.depth) == sym.type.end()) {
+                printSemanticError("undefined variable '" + $1.name + "' at current scope");
+            }
+            $$.type = sym.type[sym.depth];
+            $$.RegNum = currentScopeRegsNum++;
+            buffer->emit("ADD2I I" + to_string($$.RegNum) + " I1 " + 
+                        to_string(sym.offset[sym.depth]));
+        }
+    }
+    ;
+
+CNTRL_STMT:
+    IF BEXP THEN M STMT ELSE N M STMT
+    {
+        #if DEBUG_PARSER
+        cerr << "CNTRL_STMT:  IF BEXP THEN M STMT ELSE N M STMT" << endl;
+        #endif
+        $$.quad = buffer->nextQuad();
+        
+        buffer->backpatch($2.trueList, $4.quad);
+        buffer->backpatch($2.falseList, $6.quad);
+        
+        $$.nextList = merge($4.nextList, $6.nextList);
+        
+        int jumpQuad = buffer->nextQuad();
+        buffer->emit(string("JUMP _"));
+        vector<int> jumpList = {jumpQuad};
+        $$.nextList = merge($$.nextList, jumpList);  
+    }
+    | IF BEXP THEN M STMT
+    {
+        #if DEBUG_PARSER
+        cerr << "CNTRL_STMT:  IF BEXP THEN M STMT" << endl;
+        #endif
+        $$.quad = buffer->nextQuad();
+        buffer->backpatch($2.trueList, $4.quad);
+        $$.nextList = merge($2.falseList, $4.nextList);
+    }
+    | WHILE M BEXP DO N STMT
+    {
+        #if DEBUG_PARSER
+        cerr << "CNTRL_STMT: WHILE M BEXP DO N STMT" << endl;
+        #endif
+        buffer->backpatch($3.trueList, $5.quad);
+        buffer->emit("UJUMP " + to_string($2.quad));
+        buffer->backpatch($3.falseList, $4.quad); // Patch falseList to N marker (after DO)
+        $$.nextList = $5.nextList; // nextList of WHILE is nextList of STMT (body)
+    }
+    ;
+
+BEXP:
+    BEXP OR BEXP
+    {
+        #if DEBUG_PARSER
+        cerr << "BEXP: BEXP OR BEXP" << endl;
+        #endif
+        $$.quad = buffer->nextQuad();
+        buffer->backpatch($1.falseList, $3.quad);
+        $$.trueList = merge($1.trueList, $3.trueList);
+        $$.falseList = $3.falseList;
+    }
+    | BEXP AND BEXP
+    {
+        #if DEBUG_PARSER
+        cerr << "BEXP: BEXP AND BEXP" << endl;
+        #endif
+        $$.quad = buffer->nextQuad();
+        buffer->backpatch($1.trueList, $3.quad);
+        $$.falseList = merge($1.falseList, $3.falseList);
+        $$.trueList = $3.trueList;
+    }
+    | NOT BEXP
+    {
+        #if DEBUG_PARSER
+        cerr << "BEXP: NOT BEXP" << endl;
+        #endif
+        $$.quad = buffer->nextQuad();    
+        $$.trueList = $2.falseList;
+        $$.falseList = $2.trueList;
+    }
+    | EXP RELOP EXP
+    {
+        #if DEBUG_PARSER
+        cerr << "BEXP: EXP RELOP EXP" << endl;
+        #endif
+        $$.quad = buffer->nextQuad();
+        if ($1.type != $3.type) {
+            printSemanticError("type mismatch in relational expression");
+            return 1;
+        }
+
+        $$.RegNum = currentScopeRegsNum++;
+        string regType = ($1.type == float_) ? "F" : "I";
+        string opName;
+
+        if ($2.name == "==")       opName = "SEQU"; 
+        else if ($2.name == "<>")  opName = "SNEQ"; 
+        else if ($2.name == "<=")  opName = "SLET"; 
+        else if ($2.name == ">=")  opName = "SGRT"; 
+        else if ($2.name == "<")   opName = "SLET"; // Assuming '<' uses SLET as per table and description (If B<C then A=1 else A=0) -  needs clarification if separate SLT is intended. If separate SLT is needed, table is incomplete.
+        else if ($2.name == ">")   opName = "SGRT"; // Assuming '>' uses SGRT as per table and description (If B>C then A=1 else A=0) - needs clarification if separate SGT is intended. If separate SGT is needed, table is incomplete.
+
+
+
+        buffer->emit(opName + regType + " " + regType + to_string($$.RegNum) +
+                    " " + regType + to_string($1.RegNum) +
+                    " " + regType + to_string($3.RegNum));
+
+
+
+        if ($2.name == "<>") {
+            $$.falseList.push_back(buffer->nextQuad());
+            buffer->emit("BREQZ " + regType + to_string($$.RegNum) + " _"); 
+            $$.trueList.push_back(buffer->nextQuad());
+            buffer->emit("UJUMP _");
+        }
+
+        $$.falseList.push_back(buffer->nextQuad()); // And here
+        buffer->emit("UJUMP _");
+    }
+    | LPAREN BEXP RPAREN
+    {
+        #if DEBUG_PARSER
+        cerr << "BEXP: LPAREN BEXP RPAREN" << endl;
+        #endif
+        $$.quad = $2.quad;
+        $$.trueList = $2.trueList;
+        $$.falseList = $2.falseList;
+    }
+    ;
+
+EXP:
+    EXP ADDOP EXP
+    {
+        #if DEBUG_PARSER
+        cerr << "EXP: EXP ADDOP EXP" << endl;
+        #endif
+        $$.quad = buffer->nextQuad();
+        if ($1.type == void_t || $3.type == void_t) {
+            printSemanticError("void type in arithmetic expression");
+            return 1;
+        }
+        $$.type = ($1.type == float_ || $3.type == float_) ? float_ : int_;
+        $$.RegNum = currentScopeRegsNum++;
+        
+        if ($$.type == float_) {
+            int reg1 = $1.RegNum;
+            int reg2 = $3.RegNum;
+            
+            if ($1.type == int_) {
+                int tempReg = currentScopeRegsNum++;
+                buffer->emit(string("CITOF F") + to_string(tempReg) + string(" I") + to_string($1.RegNum));
+                reg1 = tempReg;
+            }
+            if ($3.type == int_) {
+                int tempReg = currentScopeRegsNum++;
+                buffer->emit(string("CITOF F") + to_string(tempReg) + string(" I") + to_string($3.RegNum));
+                reg2 = tempReg;
+            }
+            
+            buffer->emit(($2.name == "+") ? string("ADD2F") : string("SUBTF") + 
+                        string(" F") + to_string(reg1) + 
+                        string(" F") + to_string(reg2) + 
+                        string(" F") + to_string($$.RegNum));
+        } else {
+            buffer->emit(($2.name == "+") ? string("ADD2I") : string("SUBTI") + 
+                        string(" I") + to_string($1.RegNum) + 
+                        string(" I") + to_string($3.RegNum) + 
+                        string(" I") + to_string($$.RegNum));
+        }
+    }
+    | EXP MULOP EXP
+    {
+        #if DEBUG_PARSER
+        cerr << "EXP: EXP MULOP EXP" << endl;
+        #endif
+        $$.quad = buffer->nextQuad();
+        if ($1.type == void_t || $3.type == void_t) {
+            printSemanticError("void type in arithmetic expression");
+            return 1;
+        }
+
+        // Determine result type (float if either operand is float)
+        $$.type = ($1.type == float_ || $3.type == float_) ? float_ : int_;
+        $$.RegNum = currentScopeRegsNum++;
+
+        // Handle type conversions
+        int reg1 = $1.RegNum;
+        int reg2 = $3.RegNum;
+
+        if ($$.type == float_) {
+            // Convert left operand to float if needed
+            if ($1.type == int_) {
+                int tempReg = currentScopeRegsNum++;
+                buffer->emit("CITOF F" + to_string(tempReg) + " I" + to_string(reg1));
+                reg1 = tempReg;
+            }
+            // Convert right operand to float if needed
+            if ($3.type == int_) {
+                int tempReg = currentScopeRegsNum++;
+                buffer->emit("CITOF F" + to_string(tempReg) + " I" + to_string(reg2));
+                reg2 = tempReg;
+            }
+
+            // Emit float operation
+            if ($2.name == "*") {
+                buffer->emit("MULTF F" + to_string(reg1) 
+                        + " F" + to_string(reg2) 
+                        + " F" + to_string($$.RegNum));
+            } else { // division
+                buffer->emit("DIVDF F" + to_string(reg1) 
+                        + " F" + to_string(reg2) 
+                        + " F" + to_string($$.RegNum));
+            }   
+        } else {
+            // Emit integer operation
+            if ($2.name == "*") {
+                buffer->emit("MULTI I" + to_string(reg1) 
+                        + " I" + to_string(reg2) 
+                        + " I" + to_string($$.RegNum));
+            } else { // division
+                buffer->emit("DIVDI I" + to_string(reg1) 
+                        + " I" + to_string(reg2) 
+                        + " I" + to_string($$.RegNum));
+            }
+        }
+    }
+    | LPAREN EXP RPAREN
+    {
+        #if DEBUG_PARSER
+        cerr << "EXP: LPAREN EXP RPAREN" << endl;
+        #endif
+        $$ = $2;  // Pass through all attributes
+    }
+    | LPAREN TYPE RPAREN EXP
+    {
+        #if DEBUG_PARSER
+        cerr << "EXP: LPAREN TYPE RPAREN EXP" << endl;
+        #endif
+        $$.quad = buffer->nextQuad();
+        $$.type = $2.type;
+        $$.RegNum = currentScopeRegsNum++;
+        
+        if ($2.type == float_ && $4.type == int_) {
+            buffer->emit(string("CITOF F") + to_string($$.RegNum) + string(" I") + to_string($4.RegNum));
+        } else if ($2.type == int_ && $4.type == float_) {
+            buffer->emit(string("CFTOI I") + to_string($$.RegNum) + string(" F") + to_string($4.RegNum));
+        } else {
+            if ($2.type == float_) {
+                buffer->emit(string("COPYF F") + to_string($$.RegNum) + string(" F") + to_string($4.RegNum));
+            } else {
+                buffer->emit(string("COPYI I") + to_string($$.RegNum) + string(" I") + to_string($4.RegNum));
+            }
+        }
+    }
+    | ID
+    {
+        #if DEBUG_PARSER
+        cerr << "EXP: ID" << endl;
+        #endif
+        $$.quad = buffer->nextQuad();
+        
+        if (symbolTable.find($1.name) == symbolTable.end()) {
+            printSemanticError("unisDefined variable '" + $1.name + "'");
+            return 1;
+        }
+        
+        Symbol& sym = symbolTable[$1.name];
+        if (sym.type.find(sym.depth) == sym.type.end()) {
+            printSemanticError("unisDefined variable '" + $1.name + "' at current scope");
+            return 1;
+        }
+        
+        $$.type = sym.type[sym.depth];
+        $$.RegNum = currentScopeRegsNum++;
+        $$.name = $1.name;
+
+        if ($$.type == float_) {
+            buffer->emit(string("LOADF F") + to_string($$.RegNum) + string(" I1 ") + to_string(sym.offset[sym.depth])); // Load from float
+        } else {
+            buffer->emit(string("LOADI I") + to_string($$.RegNum) + string(" I1 ") + to_string(sym.offset[sym.depth]));   // Load from int
+        }
+    }
+    | NUM
+    {
+        #if DEBUG_PARSER
+        cerr << "EXP: NUM" << endl;
+        #endif
+        $$ = $1;
+    }
+    | CALL
+    {
+        #if DEBUG_PARSER
+        cerr << "EXP: CALL" << endl;
+        #endif
+        $$ = $1;
+    }
+    | VA_MATERIALISE
+    {
+        #if DEBUG_PARSER
+        cerr << "EXP: VA_MATERIALISE" << endl;
+        #endif
+        $$ = $1;
+    }
+    ;
+
+NUM:
+    INTEGERNUM  
+    {
+        #if DEBUG_PARSER
+        cerr << "NUM: INTEGERNUM" << endl;
+        #endif
+        $$.type = int_;
+        $$.RegNum = currentScopeRegsNum++;
+        buffer->emit(string("LOADI I") + to_string($$.RegNum) + string(" ") + $1.name);
+        $$.quad = buffer->nextQuad();
+    }
+    | REALNUM       
+    {
+        #if DEBUG_PARSER
+        cerr << "NUM: REALNUM" << endl;
+        #endif
+        $$.type = float_;
+        $$.RegNum = currentScopeRegsNum++;
+        buffer->emit(string("LOADF F") + to_string($$.RegNum) + string(" ") + $1.name);
+        $$.quad = buffer->nextQuad();
+    }
+    ;
+
+CALL:
+    ID LPAREN CALL_ARGS RPAREN
+    {
+        #if DEBUG_PARSER
+        cerr << "CALL: ID LPAREN CALL_ARGS RPAREN" << endl;
+        #endif
+        $$.quad = buffer->nextQuad();
+        
+        if (functionTable.find($1.name) == functionTable.end()) {
+            printSemanticError("unisDefined function '" + $1.name + "'");
+            return 1;
+        }
+        
+        Function& func = functionTable[$1.name];
+        
+        for (size_t i = 0; i < $3.paramTypes.size() && i < func.paramTypes.size(); i++) {
+            if ($3.paramTypes[i] == int_ && func.paramTypes[i] == float_) {
+                int newReg = currentScopeRegsNum++;
+                buffer->emit(string("CITOF F") + to_string(newReg) + string(" I") + to_string($3.paramRegs[i]));
+                $3.paramRegs[i] = newReg;  // Update the parameter register
+            }
+        }
+        
+        int callQuad = buffer->nextQuad();  // Line number of JLINK
+        buffer->emit("JLINK " + $1.name);   // Emit call instruction
+        func.callingLines.push_back(callQuad); // Track call site
+        
+        $$.type = func.returnType;
+        if ($$.type != void_t) {  // Use $$ for return value handling
+            $$.RegNum = currentScopeRegsNum++;
+            if ($$.type == float_) {
+                buffer->emit(string("COPYF F") + to_string($$.RegNum) + string(" F0"));
+            } else {
+                buffer->emit(string("COPYI I") + to_string($$.RegNum) + string(" I0"));
+            }
+        }
+    }
+    ;
+
+VA_MATERIALISE:
+    VA_ARG LPAREN TYPE COMMA EXP RPAREN
+    {
+        #if DEBUG_PARSER
+        cerr << "VA_MATERIALISE: VA_ARG LPAREN TYPE COMMA EXP RPAREN" << endl;
+        #endif
+        $$.quad = buffer->nextQuad();
+        $$.type = $3.type;
+        $$.RegNum = currentScopeRegsNum++;
+
+        // Runtime check: 0 <= index < n
+        int tempReg1 = currentScopeRegsNum++;
+        int tempReg2 = currentScopeRegsNum++;
+        int tempReg3 = currentScopeRegsNum++;
+
+        // Check index >= 0
+        buffer->emit("SLETI I" + to_string(tempReg1) + " I" + to_string($5.RegNum) + " 0");
+        buffer->emit("BNEQZ I" + to_string(tempReg1) + " _RUNTIME_ERROR"); // Jump if index < 0
+
+        // Check index < n (n is in I10 per PDF spec)
+        buffer->emit("SLETI I" + to_string(tempReg2) + " I10 I" + to_string($5.RegNum));
+        buffer->emit("BREQZ I" + to_string(tempReg2) + " _RUNTIME_ERROR"); // Jump if index >= n
+
+        // Proceed if valid
+        buffer->emit("COPYI I" + to_string($$.RegNum) + " I10");
+        
+        // Error handling block
+        int errorQuad = buffer->nextQuad();
+        buffer->emit("PRNTC 82"); // 'R'
+        buffer->emit("PRNTC 117"); // 'u'
+        // ... emit full "Runtime error!" ...
+        buffer->emit("HALT");
+        buffer->backpatch({errorQuad}, buffer->nextQuad());
+    }
+    ;
+
+CALL_ARGS:
+    CALL_ARGLIST
+    {
+        #if DEBUG_PARSER
+        cerr << "CALL_ARGS: CALL_ARGLIST" << endl;
+        #endif
+        $$ = $1;
+    }
+    | /* empty */
+    {
+        #if DEBUG_PARSER
+        cerr << "CALL_ARGS: empty" << endl;
+        #endif
+        $$.paramTypes.clear();
+        $$.paramRegs.clear(); 
+        $$.quad = buffer->nextQuad();
+    }
+    ;
+
+CALL_ARGLIST:
+    CALL_ARGLIST COMMA EXP
+    {
+        #if DEBUG_PARSER
+        cerr << "CALL_ARGS: CALL_ARGLIST COMMA EXP" << endl;
+        #endif
+        $$.quad = buffer->nextQuad();
+        $$.paramTypes = $1.paramTypes;
+        $$.paramRegs = $1.paramRegs;
+        $$.paramTypes.push_back($3.type);
+        $$.paramRegs.push_back($3.RegNum);
+
+        if ($3.type == int_) { // Int to Float Conversion if needed
+            int newReg = currentScopeRegsNum++;
+            buffer->emit(string("STOREI2F I") + to_string($3.RegNum) + string(" F") + to_string(newReg));
+            $$.paramRegs.back() = newReg;  
+        }
+    }
+    | EXP
+    {
+        #if DEBUG_PARSER
+        cerr << "CALL_ARGS: EXP" << endl;
+        #endif
+        $$.quad = buffer->nextQuad();
+        $$.paramTypes.push_back($1.type);
+        $$.paramRegs.push_back($1.RegNum);
+
+        if ($1.type == int_) { // Int to Float Conversion if needed
+            int newReg = currentScopeRegsNum++;
+            buffer->emit(string("STOREI2F I") + to_string($1.RegNum) + string(" F") + to_string(newReg));
+            $$.paramRegs.back() = newReg; 
+        }
+    }
+    ;
+
+	M : /* EPSILON */ {
+		$$.quad = buffer->nextQuad();
+	}
+	;
+ 
+
+	N : /* EPSILON */ {
+		$$.nextList.push_back(buffer->nextQuad());
+		buffer->emit("UJUMP ");
+	}
+	;
+%%
+
+int main(int argc, char* argv[]) {
+    // Check number of arguments
+    if (argc != 2) {
+        cerr << "Operational error: invalid number of arguments" << endl;
+        exit(OPERATIONAL_ERROR);
+    }
+
+    string inputFileName = argv[1];
+    
+    // Check file extension
+    size_t lastindex = inputFileName.find_last_of(".");
+    if (lastindex == string::npos || inputFileName.substr(lastindex) != ".cmm") {
+        cerr << "Operational error: invalid file type. expecting '.cmm' extension" << endl;
+        exit(OPERATIONAL_ERROR);
+    }
+
+    // Open input file
+    extern FILE* yyin;
+    yyin = fopen(argv[1], "r");
+    if (yyin == NULL) {
+        cerr << "Operational error: cannot open input file" << endl;
+        exit(OPERATIONAL_ERROR);
+    }
+
+    // Initialize buffer
+    buffer = new Buffer();
+
+    // Parse input
+    if (yyparse() != 0) {
+        // Error handling is done in yyerror
+        fclose(yyin);
+        yylex_destroy();  
+        delete buffer;
+        return 1;
+    }
+
+    // Generate header
+    string header = "<header>\n";
+    
+    // Generate unimplemented functions list
+    string uimp = "<unimplemented>";
+    for (const auto& func : functionTable) {
+        if (func.second.startLineImplementation == -1) {
+            uimp += " " + func.first;
+            for (int line : func.second.callingLines) {
+                uimp += "," + to_string(line);
+            }
+        }
+    }
+    header += uimp + "\n";
+
+    // Generate implemented functions list
+    string imp = "<implemented>";
+    for (const auto& func : functionTable) {
+        if (func.second.startLineImplementation != -1) {
+            imp += " " + func.first + "," + to_string(func.second.startLineImplementation);
+        }
+    }
+    header += imp + "\n";
+    header += "</header>\n";
+
+    // Add header to beginning of buffer
+    buffer->frontEmit(header);
+
+    // Generate output file name
+    string outputFileName = inputFileName.substr(0, lastindex) + ".rsk";
+    size_t found = outputFileName.find_last_of("/\\");
+    if (found != string::npos) {
+        outputFileName = outputFileName.substr(found + 1);
+    }
+
+    // Write to output file
+    ofstream rskFile(outputFileName);
+    if (!rskFile.is_open()) {
+        cerr << "Operational error: cannot create output file" << endl;
+        fclose(yyin);
+        yylex_destroy();  
+        delete buffer;
+        exit(OPERATIONAL_ERROR);
+    }
+
+    rskFile << buffer->printBuffer();
+    rskFile.close();
+    fclose(yyin);
+    yylex_destroy();
+
+    delete buffer;
+    return 0;
+}
+
+void yyerror(const char *s) {
+    cerr << "Syntax error: '" << yytext << "' in line number " << yylineno << endl;
+    exit(SYNTAX_ERROR);
+}
+
+int printOperationalError (string err) {
+	cerr << "Operational error: " << err << endl;
+	exit(OPERATIONAL_ERROR);
+}
+
+int printSemanticError (string err) {
+	cerr << "Semantic error: " << err << " in line number " << yylineno << endl;
+	exit(SEMANTIC_ERROR);
+}
