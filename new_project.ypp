@@ -806,7 +806,7 @@ ASSN_STMT:
         }
 
         // $$: 'LVAL' has a register pointing to that var's memory
-        int dest_offset = $1.offset;
+        int dest_offset = sym.offset[sym.depth];
         int src_reg   = $3.RegNum;
 
         if (float_ == lvalType)
@@ -1013,31 +1013,30 @@ EXP:
         }
         $$.type = ($1.type == float_ || $3.type == float_) ? float_ : int_;
         $$.RegNum = currentScopeRegsNum++;
+        int src_1 = $1.RegNum;
+        int src_2 = $3.RegNum;
 
         if ($$.type == float_) {
-            int reg1 = $1.RegNum;
-            int reg2 = $3.RegNum;
-
             if ($1.type == int_) {
                 int tempReg = currentScopeRegsNum++;
                 buffer->emit(string("CITOF F") + to_string(tempReg) + string(" I") + to_string($1.RegNum));
-                reg1 = tempReg;
+                src_1 = tempReg;
             }
             if ($3.type == int_) {
                 int tempReg = currentScopeRegsNum++;
                 buffer->emit(string("CITOF F") + to_string(tempReg) + string(" I") + to_string($3.RegNum));
-                reg2 = tempReg;
+                src_2 = tempReg;
             }
 
             buffer->emit(($2.name == "+") ? string("ADD2F") : string("SUBTF") +
-                        string(" F") + to_string(reg1) +
-                        string(" F") + to_string(reg2) +
-                        string(" F") + to_string($$.RegNum));
+                        string(" F") + to_string($$.RegNum) +
+                        string(" F") + to_string(src_1) +
+                        string(" F") + to_string(src_2));
         } else {
             buffer->emit((($2.name == "+") ? string("ADD2I") : string("SUBTI")) +
-                        string(" I") + to_string($1.RegNum) +
-                        string(" I") + to_string($3.RegNum) +
-                        string(" I") + to_string($$.RegNum));
+                        string(" I") + to_string($$.RegNum) +
+                        string(" I") + to_string(src_1) +
+                        string(" I") + to_string(src_2));
         }
     }
     | EXP MULOP EXP
@@ -1056,43 +1055,35 @@ EXP:
         $$.RegNum = currentScopeRegsNum++;
 
         // Handle type conversions
-        int reg1 = $1.RegNum;
-        int reg2 = $3.RegNum;
+        int src_1 = $1.RegNum;
+        int src_2 = $3.RegNum;
 
         if ($$.type == float_) {
             // Convert left operand to float if needed
             if ($1.type == int_) {
                 int tempReg = currentScopeRegsNum++;
-                buffer->emit("CITOF F" + to_string(tempReg) + " I" + to_string(reg1));
-                reg1 = tempReg;
+                buffer->emit("CITOF F" + to_string(tempReg) + " I" + to_string(src_1));
+                src_1 = tempReg;
             }
             // Convert right operand to float if needed
             if ($3.type == int_) {
                 int tempReg = currentScopeRegsNum++;
-                buffer->emit("CITOF F" + to_string(tempReg) + " I" + to_string(reg2));
-                reg2 = tempReg;
+                buffer->emit("CITOF F" + to_string(tempReg) + " I" + to_string(src_2));
+                src_2 = tempReg;
             }
 
             // Emit float operation
             if ($2.name == "*") {
-                buffer->emit("MULTF F" + to_string(reg1)
-                        + " F" + to_string(reg2)
-                        + " F" + to_string($$.RegNum));
+                buffer->emit("MULTF F" + to_string($$.RegNum) + " F" + to_string(src_1) + " F" + to_string(src_2));
             } else { // division
-                buffer->emit("DIVDF F" + to_string(reg1)
-                        + " F" + to_string(reg2)
-                        + " F" + to_string($$.RegNum));
+                buffer->emit("DIVDF F" + to_string($$.RegNum) + " F" + to_string(src_1) + " F" + to_string(src_2));
             }
         } else {
             // Emit integer operation
             if ($2.name == "*") {
-                buffer->emit("MULTI I" + to_string(reg1)
-                        + " I" + to_string(reg2)
-                        + " I" + to_string($$.RegNum));
+                buffer->emit("MULTI I" + to_string($$.RegNum) + " I" + to_string(src_1) + " I" + to_string(src_2));
             } else { // division
-                buffer->emit("DIVDI I" + to_string(reg1)
-                        + " I" + to_string(reg2)
-                        + " I" + to_string($$.RegNum));
+                buffer->emit("DIVDI I" + to_string($$.RegNum) + " I" + to_string(src_1) + " I" + to_string(src_2));
             }
         }
     }
