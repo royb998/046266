@@ -132,12 +132,12 @@ FDEFS:
         #if DEBUG_PARSER
         cerr << "FDEFS: FDEFS FUNC_DEC_API" << endl;
         #endif
-        if (functionTable[$2.name].startLineImplementation != -1) {
+        /*if (functionTable[$2.name].startLineImplementation != -1) {
             printSemanticError("function '" + $2.name + "' already isDefined");
         }
         functionTable[$2.name].startLineImplementation = -1;
         functionTable[$2.name].callingLines.clear();
-        symbolTable.clear();
+        symbolTable.clear();*/
     }
     | /* empty */ { }
 ;
@@ -279,6 +279,8 @@ FUNC_DEF_API:
             newFunc.returnType = $1.type;
             newFunc.startLineImplementation = $$.quad;
             newFunc.isDefined = true; // Mark as isDefined when first isDefined!
+            newFunc.indexNumVAParams = -1;
+            newFunc.startIndexVAParams = -1;
             functionTable.insert(std::pair<string,Function>($2.name, newFunc));
             #if DEBUG_PARSER
             cerr << "functionTable.size() AFTER insert: " << functionTable.size() << endl; // DEBUG: Table size after insert
@@ -318,6 +320,8 @@ FUNC_DEF_API:
             newFunc.returnType = $1.type;
             newFunc.paramTypes = $4.paramTypes;
             newFunc.paramIds = $4.paramIds;
+            newFunc.indexNumVAParams = -1;
+            newFunc.startIndexVAParams = -1;
             newFunc.startLineImplementation = buffer->nextQuad();
             functionTable.insert(std::pair<string,Function>($2.name, newFunc));
         }
@@ -347,6 +351,8 @@ FUNC_DEF_API:
             newFunc.returnType = $1.type;
             newFunc.paramTypes = $4.paramTypes;
             newFunc.paramIds = $4.paramIds;
+            newFunc.indexNumVAParams = $4.paramTypes.size();
+            newFunc.startIndexVAParams = newFunc.indexNumVAParams + 1;
             newFunc.startLineImplementation = buffer->nextQuad();
             functionTable.insert(std::pair<string,Function>($2.name, newFunc));
         }
@@ -789,28 +795,6 @@ ASSN_STMT:
             buffer->emit("STORI I" + to_string(src_reg) + " I1 " + to_string(dest_offset));
         }
 
-        /*int destBase = $1.RegNum;
-        // If float-lval
-        if (lvalType == float_) {
-            if (expType == float_) {
-                buffer->emit("STORF F" + to_string(src_reg) + " I" + to_string(destBase) + " 0");
-            } else { // int->float
-                int newReg = currentScopeRegsNum++;
-                buffer->emit("STOREI2F I" + to_string(src_reg) + " F" + to_string(newReg));
-                buffer->emit("STORF F" + to_string(newReg) + " I" + to_string(destBase) + " 0");
-            }
-        }
-        // else int-lval
-        else {
-            if (expType == int_) {
-                buffer->emit("STORI I" + to_string(src_reg) + " I" + to_string(destBase) + " 0");
-            } else { // float->int
-                int newReg = currentScopeRegsNum++;
-                buffer->emit("STOREF2I F" + to_string(src_reg) + " I" + to_string(newReg));
-                buffer->emit("STORI I" + to_string(newReg) + " I" + to_string(destBase) + " 0");
-            }
-        }*/
-
         $$.type = lvalType;
         $$.RegNum = $1.RegNum;
     }
@@ -1195,30 +1179,52 @@ VA_MATERIALISE:
         $$.quad = buffer->nextQuad();
         $$.type = $3.type;
         $$.RegNum = currentScopeRegsNum++;
+        std::vector<int> runtime_errors;
 
         // Runtime check: 0 <= index < n
         int tempReg1 = currentScopeRegsNum++;
         int tempReg2 = currentScopeRegsNum++;
-        int tempReg3 = currentScopeRegsNum++;
 
         // Check index >= 0
         buffer->emit("SLETI I" + to_string(tempReg1) + " I" + to_string($5.RegNum) + " 0");
-        buffer->emit("BNEQZ I" + to_string(tempReg1) + " _RUNTIME_ERROR"); // Jump if index < 0
+        runtime_errors.push_back(buffer->nextQuad());
+        buffer->emit("BNEQZ I" + to_string(tempReg1) + " "); // Jump if index < 0
 
-        // Check index < n (n is in I10 per PDF spec)
-        buffer->emit("SLETI I" + to_string(tempReg2) + " I10 I" + to_string($5.RegNum));
-        buffer->emit("BREQZ I" + to_string(tempReg2) + " _RUNTIME_ERROR"); // Jump if index >= n
+        // Check index < n (n is in I3 as defined in function declaration)
+        buffer->emit("SLETI I" + to_string(tempReg2) + " I3 I" + to_string($5.RegNum));
+        runtime_errors.push_back(buffer->nextQuad());
+        buffer->emit("BREQZ I" + to_string(tempReg2) + " "); // Jump if index >= n
 
         // Proceed if valid
-        buffer->emit("COPYI I" + to_string($$.RegNum) + " I10");
-        
+        int va_param_index = currentScopeRegsNum++;
+        int va_param_offset = currentScopeRegsNum++;
+        buffer->emit("ADD2I I" + to_string(va_param_index) + " I3 I" + to_string($5.RegNum));
+        buffer->emit("MULTI I" + to_string(va_param_offset) + " I" + to_string(va_param_index) + " 4"); // turn index into offset
+        buffer->emit("LOADI I" + to_string($$.RegNum) + " I3 I" + to_string(va_param_offset));
+
         // Error handling block
-        int errorQuad = buffer->nextQuad();
-        buffer->emit("PRNTC 82"); // 'R'
-        buffer->emit("PRNTC 117"); // 'u'
-        // ... emit full "Runtime error!" ...
+        int runtime_error_skip = buffer->nextQuad();
+        buffer->emit("UJUMP ");
+        int runtime_error_print = buffer->nextQuad();
+        buffer->emit("PRNTC 82");   // R
+        buffer->emit("PRNTC 117");  // u
+        buffer->emit("PRNTC 110");  // n
+        buffer->emit("PRNTC 116");  // t
+        buffer->emit("PRNTC 105");  // i
+        buffer->emit("PRNTC 109");  // m
+        buffer->emit("PRNTC 101");  // e
+        buffer->emit("PRNTC 32");   //
+        buffer->emit("PRNTC 101");  // e
+        buffer->emit("PRNTC 114");  // r
+        buffer->emit("PRNTC 114");  // r
+        buffer->emit("PRNTC 111");  // o
+        buffer->emit("PRNTC 114");  // r
+        buffer->emit("PRNTC 33");   // !
+        buffer->emit("PRNTC 10");   // \n
         buffer->emit("HALT");
-        buffer->backpatch({errorQuad}, buffer->nextQuad());
+        buffer->backpatch(runtime_errors, runtime_error_print);
+        $$.nextList.push_back(runtime_error_skip); // Skip if nothing bad happened.
+        buffer->backpatch($$.nextList, buffer->nextQuad());
     }
 ;
 
@@ -1253,11 +1259,11 @@ CALL_ARGLIST:
         $$.paramTypes.push_back($3.type);
         $$.paramRegs.push_back($3.RegNum);
 
-        if ($3.type == int_) { // Int to Float Conversion if needed
+        /*if ($3.type == int_) { // Int to Float Conversion if needed
             int newReg = currentScopeRegsNum++;
             buffer->emit(string("STOREI2F I") + to_string($3.RegNum) + string(" F") + to_string(newReg));
             $$.paramRegs.back() = newReg;
-        }
+        }*/
     }
     | EXP
     {
@@ -1268,11 +1274,11 @@ CALL_ARGLIST:
         $$.paramTypes.push_back($1.type);
         $$.paramRegs.push_back($1.RegNum);
 
-        if ($1.type == int_) { // Int to Float Conversion if needed
+        /*if ($1.type == int_) { // Int to Float Conversion if needed
             int newReg = currentScopeRegsNum++;
             buffer->emit(string("STOREI2F I") + to_string($1.RegNum) + string(" F") + to_string(newReg));
             $$.paramRegs.back() = newReg;
-        }
+        }*/
     }
 ;
 
