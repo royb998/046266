@@ -772,18 +772,19 @@ READ_STMT:
         #endif
         Symbol& sym = symbolTable[$3.name];
         int offset = sym.offset[sym.depth];
-        int addrReg = currentScopeRegsNum++;
-        buffer->emit("ADD2I I" + to_string(addrReg) + " I1 " + to_string(offset));
+        //int addrReg = currentScopeRegsNum++;
+        //buffer->emit("ADD2I I" + to_string(addrReg) + " I1 " + to_string(offset));
 
+        int tempReg = currentScopeRegsNum++;
         // Use sym.type instead of varType
         if (sym.type[sym.depth] == float_) {
-            int tempReg = currentScopeRegsNum++;
             buffer->emit("READF F" + to_string(tempReg));
-            buffer->emit("STORF F" + to_string(tempReg) + " I" + to_string(addrReg) + " 0");
+            //buffer->emit("STORF F" + to_string(tempReg) + " I" + to_string(addrReg) + " 0");
+            buffer->emit("STORF F" + to_string(tempReg) + " I1 " + to_string(offset));
         } else {
-            int tempReg = currentScopeRegsNum++;
             buffer->emit("READI I" + to_string(tempReg));
-            buffer->emit("STORI I" + to_string(tempReg) + " I" + to_string(addrReg) + " 0");
+            //buffer->emit("STORI I" + to_string(tempReg) + " I" + to_string(addrReg) + " 0");
+            buffer->emit("STORI I" + to_string(tempReg) + " I1 " + to_string(offset));
         }
     }
 ;
@@ -805,32 +806,56 @@ ASSN_STMT:
         }
 
         // $$: 'LVAL' has a register pointing to that var's memory
-        int destBase = $1.RegNum;
-        int valReg   = $3.RegNum;
+        int dest_offset = $1.offset;
+        int src_reg   = $3.RegNum;
 
+        if (float_ == lvalType)
+        {
+            if (int_ == expType)
+            {
+                int temp_reg = currentScopeRegsNum;
+                buffer->emit("CITOF F" + to_string(temp_reg) + " I" + to_string(src_reg));
+                src_reg = temp_reg;
+                ++currentScopeRegsNum;
+            }
+            buffer->emit("STORF F" + to_string(src_reg) + " I1 " + to_string(dest_offset));
+        }
+        else // int_ == lvalType
+        {
+            if (float_ == expType)
+            {
+                int temp_reg = currentScopeRegsNum;
+                buffer->emit("CFTOI I" + to_string(temp_reg) + " F" + to_string(src_reg));
+                src_reg = temp_reg;
+                ++currentScopeRegsNum;
+            }
+            buffer->emit("STORI I" + to_string(src_reg) + " I1 " + to_string(dest_offset));
+        }
+
+        /*int destBase = $1.RegNum;
         // If float-lval
         if (lvalType == float_) {
             if (expType == float_) {
-                buffer->emit("STORF F" + to_string(valReg) + " I" + to_string(destBase) + " 0");
+                buffer->emit("STORF F" + to_string(src_reg) + " I" + to_string(destBase) + " 0");
             } else { // int->float
                 int newReg = currentScopeRegsNum++;
-                buffer->emit("STOREI2F I" + to_string(valReg) + " F" + to_string(newReg));
+                buffer->emit("STOREI2F I" + to_string(src_reg) + " F" + to_string(newReg));
                 buffer->emit("STORF F" + to_string(newReg) + " I" + to_string(destBase) + " 0");
             }
         }
         // else int-lval
         else {
             if (expType == int_) {
-                buffer->emit("STORI I" + to_string(valReg) + " I" + to_string(destBase) + " 0");
+                buffer->emit("STORI I" + to_string(src_reg) + " I" + to_string(destBase) + " 0");
             } else { // float->int
                 int newReg = currentScopeRegsNum++;
-                buffer->emit("STOREF2I F" + to_string(valReg) + " I" + to_string(newReg));
+                buffer->emit("STOREF2I F" + to_string(src_reg) + " I" + to_string(newReg));
                 buffer->emit("STORI I" + to_string(newReg) + " I" + to_string(destBase) + " 0");
             }
         }*/
 
         $$.type = lvalType;
-        $$.RegNum = destBase;
+        $$.RegNum = $1.RegNum;
     }
 ;
 
