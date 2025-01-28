@@ -1,6 +1,16 @@
+# Environment
 ._*
 *fier
 *bz2
+*.swp
+
+# Running/debugging
 outputs/
 examples/
+
+# Artifacts
+rx-cc
 *.rsk
+*.o
+*.yy.*
+*.tab.*
