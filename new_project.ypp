@@ -115,6 +115,7 @@ FDEFS:
             buffer->backpatch(func.second.callingLines, func.second.startLineImplementation);
         }
 
+        buffer->backpatch($3.nextList, buffer->nextQuad());
         // Emit RETRN at the end of the function
         buffer->emit("RETRN");
 
@@ -167,7 +168,7 @@ FUNC_DEC_API:
             functionTable.insert(std::pair<string,Function>($2.name, newFunc));
         }
     }
-    | TYPE ID LPAREN M FUNC_ARGLIST RPAREN SEMICOLON
+    | TYPE ID LPAREN FUNC_ARGLIST RPAREN SEMICOLON
     {
         #if DEBUG_PARSER
         cerr << "FUNC_DEF_API: TYPE ID LPAREN M FUNC_ARGLIST RPAREN SEMICOLON" << endl;
@@ -355,8 +356,7 @@ FUNC_DEF_API:
         ++currentScopeRegsNum;
         if (3 != num_va_params_reg)
         {
-            cerr << "Something went wrong. VA num reg should be 3." << endl;
-            return 1;
+            printOperationalError("Something went wrong. VA num reg should be 3.");
         }
         buffer->emit("COPYI I" + to_string(num_va_params_reg) + " " + to_string(num_va_params_index));
     }
@@ -421,7 +421,8 @@ BLK:
         cerr << "BLK: LBRACE STLIST M RBRACE" << endl; // Add debug print here
         #endif
         $$.quad = $2.quad;
-        buffer->backpatch($1.nextList, $3.quad);
+        buffer->backpatch($2.nextList, $3.quad);
+
         // Reset scope after block ends
         //currentScopeRegsNum = 3;  // Reset register allocation
         // Don't clear symbol table here - only clear at function level
@@ -449,7 +450,6 @@ DCL:
         else if (symbolTable[$1.name].type.find(currentScopeOffset) != symbolTable[$1.name].type.end())
         {
             printSemanticError("redefinition of variable '" + $1.name + "'");
-            return 1;
         }
         else
         {
@@ -493,7 +493,6 @@ DCL:
         else if (symbolTable[$1.name].type.find(currentScopeOffset) != symbolTable[$1.name].type.end())
         {
             printSemanticError("redefinition of variable '" + $1.name + "'");
-            return 1;
         }
         else
         {
@@ -501,43 +500,6 @@ DCL:
             symbolTable[$1.name].depth = currentScopeOffset;
         }
         current_symbols.push_back($1.name);
-
-        /*// Check redeclaration
-        if (symbolTable.find($1.name) != symbolTable.end() &&
-            symbolTable[$1.name].type.find(currentScopeOffset) != symbolTable[$1.name].type.end()) {
-            printSemanticError("redefinition of variable '" + $1.name + "'");
-        }
-
-        // Allocate space for the variable in the stack.
-        buffer->emit("ADD2I I2 I2 4");
-        // Offset of the new variable from the frame base.
-        int varOffset = current_variable_offset;
-        current_variable_offset += 4;
-
-        Symbol newSymbol;
-        newSymbol.type[currentScopeOffset] = $3.type;
-        newSymbol.offset[currentScopeOffset] = varOffset;
-        newSymbol.depth = currentScopeOffset;
-
-        // Allocate register for address calculation (REMOVE baseReg)
-        //int addrReg = currentScopeRegsNum++;
-        //buffer->emit("ADD2I I" + to_string(addrReg) + " I1 " + to_string(currentScopeOffset));*/
-
-        /*
-        // Initialize variable
-        int initReg = currentScopeRegsNum++;
-        if ($3.type == float_) {
-            buffer->emit("COPYF F" + to_string(initReg) + " 0.0");
-            buffer->emit("STORF F" + to_string(initReg) + " I" + to_string(addrReg) + " 0");
-        } else {
-            buffer->emit("COPYI I" + to_string(initReg) + " 0");
-            buffer->emit("STORI I" + to_string(initReg) + " I" + to_string(addrReg) + " 0");
-        }
-        */
-
-        /*symbolTable[$1.name] = newSymbol;
-        ++currentScopeOffset;
-        //$$.RegNum = addrReg; // Use addrReg directly*/
     }
 ;
 
@@ -574,8 +536,6 @@ STLIST:
         #if DEBUG_PARSER
         cerr << "STLIST: STLIST STMT" << endl;
         #endif
-        //$$.quad = $2.quad;  // Pass up the quad of the last statement
-        //$$.nextList = $2.nextList;  // Pass up any unresolved jumps
         $$.quad = $1.quad;
         buffer->backpatch($1.nextList, $2.quad);
         $$.nextList = $2.nextList;
@@ -603,7 +563,7 @@ STMT:
         for (auto symbol_name : current_symbols)
         {
             // Allocate space on the stack for the variable.
-            buffer->emit("ADD2I I2 I2 4; " + symbol_name);
+            buffer->emit("ADD2I I2 I2 4");
             // Offset of the new variable from the frame base.
             symbolTable[symbol_name].offset[currentScopeOffset] = current_variable_offset;
             current_variable_offset += 4;
@@ -772,18 +732,14 @@ READ_STMT:
         #endif
         Symbol& sym = symbolTable[$3.name];
         int offset = sym.offset[sym.depth];
-        //int addrReg = currentScopeRegsNum++;
-        //buffer->emit("ADD2I I" + to_string(addrReg) + " I1 " + to_string(offset));
 
         int tempReg = currentScopeRegsNum++;
         // Use sym.type instead of varType
         if (sym.type[sym.depth] == float_) {
             buffer->emit("READF F" + to_string(tempReg));
-            //buffer->emit("STORF F" + to_string(tempReg) + " I" + to_string(addrReg) + " 0");
             buffer->emit("STORF F" + to_string(tempReg) + " I1 " + to_string(offset));
         } else {
             buffer->emit("READI I" + to_string(tempReg));
-            //buffer->emit("STORI I" + to_string(tempReg) + " I" + to_string(addrReg) + " 0");
             buffer->emit("STORI I" + to_string(tempReg) + " I1 " + to_string(offset));
         }
     }
@@ -870,16 +826,17 @@ LVAL:
 
         if (symbolTable.find($1.name) == symbolTable.end()) {
             printSemanticError("undefined variable '" + $1.name + "'");
-        } else {
-            Symbol& sym = symbolTable[$1.name];
-            if (sym.type.find(sym.depth) == sym.type.end()) {
-                printSemanticError("undefined variable '" + $1.name + "' at current scope");
-            }
-            //$$.type = sym.type[sym.depth];
-            //$$.RegNum = currentScopeRegsNum++;
-            //buffer->emit("ADD2I I" + to_string($$.RegNum) + " I1 " +
-            //            to_string(sym.offset[sym.depth]));
         }
+
+        Symbol& sym = symbolTable[$1.name];
+
+        if (sym.type.find(sym.depth) == sym.type.end()) {
+            printSemanticError("undefined variable '" + $1.name + "' at current scope");
+        }
+        //$$.type = sym.type[sym.depth];
+        //$$.RegNum = currentScopeRegsNum++;
+        //buffer->emit("ADD2I I" + to_string($$.RegNum) + " I1 " +
+        //            to_string(sym.offset[sym.depth]));
     }
 ;
 
@@ -961,7 +918,6 @@ BEXP:
         $$.quad = buffer->nextQuad();
         if ($1.type != $3.type) {
             printSemanticError("type mismatch in relational expression");
-            return 1;
         }
 
         $$.RegNum = currentScopeRegsNum++;
@@ -1009,7 +965,6 @@ EXP:
         $$.quad = buffer->nextQuad();
         if ($1.type == void_t || $3.type == void_t) {
             printSemanticError("void type in arithmetic expression");
-            return 1;
         }
         $$.type = ($1.type == float_ || $3.type == float_) ? float_ : int_;
         $$.RegNum = currentScopeRegsNum++;
@@ -1028,7 +983,7 @@ EXP:
                 src_2 = tempReg;
             }
 
-            buffer->emit(($2.name == "+") ? string("ADD2F") : string("SUBTF") +
+            buffer->emit((($2.name == "+") ? string("ADD2F") : string("SUBTF")) +
                         string(" F") + to_string($$.RegNum) +
                         string(" F") + to_string(src_1) +
                         string(" F") + to_string(src_2));
@@ -1047,7 +1002,6 @@ EXP:
         $$.quad = buffer->nextQuad();
         if ($1.type == void_t || $3.type == void_t) {
             printSemanticError("void type in arithmetic expression");
-            return 1;
         }
 
         // Determine result type (float if either operand is float)
@@ -1124,13 +1078,11 @@ EXP:
 
         if (symbolTable.find($1.name) == symbolTable.end()) {
             printSemanticError("unisDefined variable '" + $1.name + "'");
-            return 1;
         }
 
         Symbol& sym = symbolTable[$1.name];
         if (sym.type.find(sym.depth) == sym.type.end()) {
             printSemanticError("unisDefined variable '" + $1.name + "' at current scope");
-            return 1;
         }
 
         $$.type = sym.type[sym.depth];
@@ -1199,7 +1151,6 @@ CALL:
 
         if (functionTable.find($1.name) == functionTable.end()) {
             printSemanticError("unisDefined function '" + $1.name + "'");
-            return 1;
         }
 
         Function& func = functionTable[$1.name];
@@ -1397,7 +1348,7 @@ int main(int argc, char* argv[]) {
         }
     }
     header += imp + "\n";
-    header += "</header>\n";
+    header += "</header>";
 
     // Add header to beginning of buffer
     buffer->frontEmit(header);
