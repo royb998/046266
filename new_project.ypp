@@ -146,7 +146,7 @@ FUNC_DEC_API:
         #endif
         $$.name = $2.name;
         $$.type = $1.type;
-        $$.quad = buffer->nextQuad();
+        $$.quad = buffer->nextQuad(); // TODO: Is this correct?
 
         if (functionTable.find($2.name) != functionTable.end()) {
             Function& existingFunc = functionTable[$2.name];
@@ -205,7 +205,7 @@ FUNC_DEC_API:
         $$.type = $1.type;
         $$.paramTypes = $4.paramTypes;
         $$.paramIds = $4.paramIds;
-        $$.quad = buffer->nextQuad();
+        $$.quad = buffer->nextQuad(); // TODO: Is this correct?
 
         if (functionTable.find($2.name) != functionTable.end()) {
             Function& existingFunc = functionTable[$2.name];
@@ -384,6 +384,7 @@ BLK:
         cerr << "BLK: LBRACE STLIST M RBRACE" << endl; // Add debug print here
         #endif
         $$.quad = $2.quad;
+        buffer->backpatch($1.nextList, $3.quad);
         // Reset scope after block ends
         //currentScopeRegsNum = 3;  // Reset register allocation
         // Don't clear symbol table here - only clear at function level
@@ -520,6 +521,9 @@ STLIST:
         #endif
         //$$.quad = $2.quad;  // Pass up the quad of the last statement
         //$$.nextList = $2.nextList;  // Pass up any unresolved jumps
+        $$.quad = $1.quad;
+        buffer->backpatch($1.nextList, $2.quad);
+        $$.nextList = $2.nextList;
     }
     | /* empty */
     {
@@ -798,14 +802,12 @@ CNTRL_STMT:
         //$$.quad = buffer->nextQuad();
 
         buffer->backpatch($2.trueList, $4.quad);
-        buffer->backpatch($2.falseList, $6.quad);
-        
-        $$.nextList = merge($4.nextList, $6.nextList);
-        
-        int jumpQuad = buffer->nextQuad();
-        buffer->emit(string("JUMP _"));
-        vector<int> jumpList = {jumpQuad};
-        $$.nextList = merge($$.nextList, jumpList);  
+        buffer->backpatch($2.falseList, $8.quad);
+
+        $$.nextList = merge($4.nextList, $8.nextList);
+        $$.nextList.push_back(buffer->nextQuad());
+        //vector<int> jumpList = {jumpQuad};
+        //$$.nextList = merge($$.nextList, jumpList);
     }
     | IF BEXP THEN M STMT
     {
@@ -821,10 +823,13 @@ CNTRL_STMT:
         #if DEBUG_PARSER
         cerr << "CNTRL_STMT: WHILE M BEXP DO M STMT" << endl;
         #endif
+        buffer->backpatch($6.nextList, $2.quad);
         buffer->backpatch($3.trueList, $5.quad);
+        $$.nextList = merge($3.falseList, $6.nextList);
+        /*buffer->backpatch($3.trueList, $5.quad);
         buffer->emit("UJUMP " + to_string($2.quad));
-        buffer->backpatch($3.falseList, $4.quad); // Patch falseList to N marker (after DO)
-        $$.nextList = $5.nextList; // nextList of WHILE is nextList of STMT (body)
+        buffer->backpatch($3.falseList, $5.quad); // Patch falseList to N marker (after DO)
+        $$.nextList = $5.nextList; // nextList of WHILE is nextList of STMT (body)*/
     }
 ;
 
@@ -886,13 +891,13 @@ BEXP:
 
         if ($2.name == "<>") {
             $$.falseList.push_back(buffer->nextQuad());
-            buffer->emit("BREQZ " + regType + to_string($$.RegNum) + " _"); 
+            buffer->emit("BREQZ " + regType + to_string($$.RegNum) + " ");
             $$.trueList.push_back(buffer->nextQuad());
-            buffer->emit("UJUMP _");
+            buffer->emit("UJUMP ");
         }
 
         $$.falseList.push_back(buffer->nextQuad()); // And here
-        buffer->emit("UJUMP _");
+        buffer->emit("UJUMP ");
     }
     | LPAREN BEXP RPAREN
     {
@@ -933,15 +938,15 @@ EXP:
                 buffer->emit(string("CITOF F") + to_string(tempReg) + string(" I") + to_string($3.RegNum));
                 reg2 = tempReg;
             }
-            
-            buffer->emit(($2.name == "+") ? string("ADD2F") : string("SUBTF") + 
-                        string(" F") + to_string(reg1) + 
-                        string(" F") + to_string(reg2) + 
+
+            buffer->emit(($2.name == "+") ? string("ADD2F") : string("SUBTF") +
+                        string(" F") + to_string(reg1) +
+                        string(" F") + to_string(reg2) +
                         string(" F") + to_string($$.RegNum));
         } else {
-            buffer->emit(($2.name == "+") ? string("ADD2I") : string("SUBTI") + 
-                        string(" I") + to_string($1.RegNum) + 
-                        string(" I") + to_string($3.RegNum) + 
+            buffer->emit((($2.name == "+") ? string("ADD2I") : string("SUBTI")) +
+                        string(" I") + to_string($1.RegNum) +
+                        string(" I") + to_string($3.RegNum) +
                         string(" I") + to_string($$.RegNum));
         }
     }
@@ -980,23 +985,23 @@ EXP:
 
             // Emit float operation
             if ($2.name == "*") {
-                buffer->emit("MULTF F" + to_string(reg1) 
-                        + " F" + to_string(reg2) 
+                buffer->emit("MULTF F" + to_string(reg1)
+                        + " F" + to_string(reg2)
                         + " F" + to_string($$.RegNum));
             } else { // division
-                buffer->emit("DIVDF F" + to_string(reg1) 
-                        + " F" + to_string(reg2) 
+                buffer->emit("DIVDF F" + to_string(reg1)
+                        + " F" + to_string(reg2)
                         + " F" + to_string($$.RegNum));
-            }   
+            }
         } else {
             // Emit integer operation
             if ($2.name == "*") {
-                buffer->emit("MULTI I" + to_string(reg1) 
-                        + " I" + to_string(reg2) 
+                buffer->emit("MULTI I" + to_string(reg1)
+                        + " I" + to_string(reg2)
                         + " I" + to_string($$.RegNum));
             } else { // division
-                buffer->emit("DIVDI I" + to_string(reg1) 
-                        + " I" + to_string(reg2) 
+                buffer->emit("DIVDI I" + to_string(reg1)
+                        + " I" + to_string(reg2)
                         + " I" + to_string($$.RegNum));
             }
         }
@@ -1088,7 +1093,7 @@ NUM:
         #endif
         $$.type = int_;
         $$.RegNum = currentScopeRegsNum++;
-        buffer->emit(string("LOADI I") + to_string($$.RegNum) + string(" ") + $1.name);
+        buffer->emit(string("COPYI I") + to_string($$.RegNum) + string(" ") + $1.name);
         $$.quad = buffer->nextQuad();
     }
     | REALNUM
@@ -1098,7 +1103,7 @@ NUM:
         #endif
         $$.type = float_;
         $$.RegNum = currentScopeRegsNum++;
-        buffer->emit(string("LOADF F") + to_string($$.RegNum) + string(" ") + $1.name);
+        buffer->emit(string("COPYF F") + to_string($$.RegNum) + string(" ") + $1.name);
         $$.quad = buffer->nextQuad();
     }
 ;
