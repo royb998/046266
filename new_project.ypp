@@ -97,8 +97,8 @@ PROGRAM:
             buffer->backpatch(func.second.callingLines, func.second.startLineImplementation);
         }
 
-        // Add HALT AFTER all functions
-        //buffer->emit("HALT"); 
+        /*// Add HALT AFTER all functions
+        buffer->emit("HALT");*/
     }
 ;
 
@@ -236,17 +236,17 @@ FUNC_DEF_API:
         $$.name = $2.name;
         $$.type = $1.type;
         $$.quad = buffer->nextQuad();
-
-        cerr << "--- FUNC_DEF_API Processing for function: " << $2.name << " ---" << endl; 
-        cerr << "Before functionTable.find('" << $2.name << "')" << endl; 
+        /*
+        cerr << "--- FUNC_DEF_API Processing for function: " << $2.name << " ---" << endl;
+        cerr << "Before functionTable.find('" << $2.name << "')" << endl;
         cerr << "functionTable.size(): " << functionTable.size() << endl; // DEBUG: Table size
         //cerr << "definedFunctions.size(): " << definedFunctions.size() << endl; // DEBUG: Set size
-
+        */
         if ($2.name == "main" && $1.type != void_t) {
             printSemanticError("main function must return void");
         }
 
-        cerr << "Before functionTable.find('" << $2.name << "')" << endl;
+        //cerr << "Before functionTable.find('" << $2.name << "')" << endl;
         if (functionTable.find($2.name) != functionTable.end()) {
             Function& existingFunc = functionTable[$2.name];
             #if DEBUG_PARSER
@@ -364,7 +364,7 @@ FUNC_ARGLIST:
         $$.paramTypes.push_back($3.type);
         $$.paramIds = $1.paramIds;
         $$.paramIds.push_back($3.name);
-        $$.quad = buffer->nextQuad();
+        //$$.quad = buffer->nextQuad(); // TODO: Unnecessary?
     }
     | DCL
     {
@@ -373,7 +373,7 @@ FUNC_ARGLIST:
         #endif
         $$.paramTypes.push_back($1.type);
         $$.paramIds.push_back($1.name);
-        $$.quad = buffer->nextQuad();
+        //$$.quad = buffer->nextQuad();
     }
 ;
 
@@ -492,7 +492,7 @@ TYPE:
         cerr << "TYPE: INT" << endl;
         #endif
         $$.type = int_;
-        $$.quad = buffer->nextQuad();
+        //$$.quad = buffer->nextQuad();
     }
     | FLOAT
     {
@@ -500,7 +500,7 @@ TYPE:
         cerr << "TYPE: FLOAT" << endl;
         #endif
         $$.type = float_;
-        $$.quad = buffer->nextQuad();
+        //$$.quad = buffer->nextQuad();
     }
     | VOID
     {
@@ -508,7 +508,7 @@ TYPE:
         cerr << "TYPE: VOID" << endl;
         #endif
         $$.type = void_t;
-        $$.quad = buffer->nextQuad();
+        //$$.quad = buffer->nextQuad();
     }
 ;
 
@@ -518,8 +518,8 @@ STLIST:
         #if DEBUG_PARSER
         cerr << "STLIST: STLIST STMT" << endl;
         #endif
-        $$.quad = $2.quad;  // Pass up the quad of the last statement
-        $$.nextList = $2.nextList;  // Pass up any unresolved jumps
+        //$$.quad = $2.quad;  // Pass up the quad of the last statement
+        //$$.nextList = $2.nextList;  // Pass up any unresolved jumps
     }
     | /* empty */
     {
@@ -527,7 +527,7 @@ STLIST:
         cerr << "STLIST: empty" << endl;
         #endif
         $$.quad = buffer->nextQuad();
-        $$.nextList.clear();  // Initialize empty nextList
+        //$$.nextList.clear();
     }
 ;
 
@@ -539,7 +539,7 @@ STMT:
         #endif
         $$.quad = $1.quad;
         $$.type = $1.type;
-        $$.nextList.clear();
+        //$$.nextList.clear();
     }
     | ASSN_STMT
     {
@@ -557,7 +557,7 @@ STMT:
         #endif
         $$.quad = $1.quad;
         $$.type = $1.type;
-        $$.nextList.clear();
+        //$$.nextList.clear();
     }
     | CNTRL_STMT
     {
@@ -573,7 +573,7 @@ STMT:
         cerr << "STMT: READ_STMT" << endl;
         #endif
         $$.quad = $1.quad;
-        $$.nextList.clear(); 
+        //$$.nextList.clear();
     }
     | WRITE_STMT
     {
@@ -581,7 +581,7 @@ STMT:
         cerr << "STMT: WRITE_STMT" << endl;
         #endif
         $$.quad = $1.quad;
-        $$.nextList.clear();
+        //$$.nextList.clear();
     }
     | RETURN_STMT
     {
@@ -589,8 +589,8 @@ STMT:
         cerr << "STMT: RETURN_STMT" << endl;
         #endif
         $$.quad = $1.quad;
-        $$.nextList.clear();
-        
+        //$$.nextList.clear();
+
         if (!functionTable.empty()) {
             string currentFunc = "";
             for (auto& pair : functionTable) {
@@ -781,10 +781,10 @@ LVAL:
             if (sym.type.find(sym.depth) == sym.type.end()) {
                 printSemanticError("undefined variable '" + $1.name + "' at current scope");
             }
-            $$.type = sym.type[sym.depth];
-            $$.RegNum = currentScopeRegsNum++;
-            buffer->emit("ADD2I I" + to_string($$.RegNum) + " I1 " + 
-                        to_string(sym.offset[sym.depth]));
+            //$$.type = sym.type[sym.depth];
+            //$$.RegNum = currentScopeRegsNum++;
+            //buffer->emit("ADD2I I" + to_string($$.RegNum) + " I1 " +
+            //            to_string(sym.offset[sym.depth]));
         }
     }
 ;
@@ -795,8 +795,8 @@ CNTRL_STMT:
         #if DEBUG_PARSER
         cerr << "CNTRL_STMT:  IF BEXP THEN M STMT N ELSE M STMT" << endl;
         #endif
-        $$.quad = buffer->nextQuad();
-        
+        //$$.quad = buffer->nextQuad();
+
         buffer->backpatch($2.trueList, $4.quad);
         buffer->backpatch($2.falseList, $6.quad);
         
@@ -1192,7 +1192,7 @@ CALL_ARGS:
         cerr << "CALL_ARGS: empty" << endl;
         #endif
         $$.paramTypes.clear();
-        $$.paramRegs.clear(); 
+        $$.paramRegs.clear();
         $$.quad = buffer->nextQuad();
     }
 ;
