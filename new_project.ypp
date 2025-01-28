@@ -378,7 +378,7 @@ FUNC_ARGLIST:
         $$.paramTypes.push_back($3.type);
         $$.paramIds = $1.paramIds;
         $$.paramIds.push_back($3.name);
-        //$$.quad = buffer->nextQuad(); // TODO: Unnecessary?
+        $$.quad = buffer->nextQuad();
 
         // Finish defining params.
         //for (auto symbol_name : current_symbols)
@@ -398,7 +398,7 @@ FUNC_ARGLIST:
         #if DEBUG_PARSER
         cerr << "FUNC_ARGLIST: DCL" << endl; // Add debug print here
         #endif
-        //$$.quad = buffer->nextQuad();
+        $$.quad = buffer->nextQuad();
 
         // Finish defining params.
         for (auto iter = current_symbols.rbegin(); iter != current_symbols.rend(); ++iter)
@@ -438,7 +438,7 @@ DCL:
         #endif
         $$.name = $1.name;
         $$.type = $3.type;
-        //$$.quad = buffer->nextQuad();
+        $$.quad = buffer->nextQuad();
 
         if (symbolTable.find($1.name) == symbolTable.end())
         {
@@ -481,7 +481,7 @@ DCL:
         #endif
         $$.name = $1.name;
         $$.type = $3.type;
-        //$$.quad = buffer->nextQuad();
+        $$.quad = buffer->nextQuad();
 
         if (symbolTable.find($1.name) == symbolTable.end())
         {
@@ -510,7 +510,7 @@ TYPE:
         cerr << "TYPE: INT" << endl;
         #endif
         $$.type = int_;
-        //$$.quad = buffer->nextQuad();
+        $$.quad = buffer->nextQuad();
     }
     | FLOAT
     {
@@ -518,7 +518,7 @@ TYPE:
         cerr << "TYPE: FLOAT" << endl;
         #endif
         $$.type = float_;
-        //$$.quad = buffer->nextQuad();
+        $$.quad = buffer->nextQuad();
     }
     | VOID
     {
@@ -526,7 +526,7 @@ TYPE:
         cerr << "TYPE: VOID" << endl;
         #endif
         $$.type = void_t;
-        //$$.quad = buffer->nextQuad();
+        $$.quad = buffer->nextQuad();
     }
 ;
 
@@ -694,6 +694,7 @@ WRITE_STMT:
         #if DEBUG_PARSER
         cerr << "WRITE_STMT: WRITE LPAREN STRING_LITERAL RPAREN SEMICOLON" << endl;
         #endif
+        $$.quad = buffer->nextQuad();
         string str = $3.name;
         str = str.substr(1, str.length() - 2); // Remove surrounding quotes
 
@@ -846,7 +847,7 @@ CNTRL_STMT:
         #if DEBUG_PARSER
         cerr << "CNTRL_STMT:  IF BEXP THEN M STMT N ELSE M STMT" << endl;
         #endif
-        //$$.quad = buffer->nextQuad();
+        $$.quad = buffer->nextQuad();
 
         buffer->backpatch($2.trueList, $4.quad);
         buffer->backpatch($2.falseList, $8.quad);
@@ -872,11 +873,8 @@ CNTRL_STMT:
         #endif
         buffer->backpatch($6.nextList, $2.quad);
         buffer->backpatch($3.trueList, $5.quad);
-        $$.nextList = merge($3.falseList, $6.nextList);
-        /*buffer->backpatch($3.trueList, $5.quad);
+        $$.nextList = $3.falseList;
         buffer->emit("UJUMP " + to_string($2.quad));
-        buffer->backpatch($3.falseList, $5.quad); // Patch falseList to N marker (after DO)
-        $$.nextList = $5.nextList; // nextList of WHILE is nextList of STMT (body)*/
     }
 ;
 
@@ -924,25 +922,34 @@ BEXP:
         string regType = ($1.type == float_) ? "F" : "I";
         string opName;
 
-        if ($2.name == "==")       opName = "SEQU"; 
-        else if ($2.name == "<>")  opName = "SNEQ"; 
-        else if ($2.name == "<=")  opName = "SLET"; 
-        else if ($2.name == ">=")  opName = "SGRT"; 
-        else if ($2.name == "<")   opName = "SLET"; // Assuming '<' uses SLET as per table and description (If B<C then A=1 else A=0) -  needs clarification if separate SLT is intended. If separate SLT is needed, table is incomplete.
-        else if ($2.name == ">")   opName = "SGRT"; // Assuming '>' uses SGRT as per table and description (If B>C then A=1 else A=0) - needs clarification if separate SGT is intended. If separate SGT is needed, table is incomplete.
+        if ($2.name == "==")       opName = "SEQU";
+        else if ($2.name == "<>")  opName = "SNEQ";
+        else if ($2.name == "<")   opName = "SLET";
+        else if ($2.name == ">")   opName = "SGRT";
+        // greater/less-equal use negation of the operators less/greater.
+        else if ($2.name == ">=")  opName = "SLET";
+        else if ($2.name == "<=")  opName = "SGRT";
 
         buffer->emit(opName + regType + " " + regType + to_string($$.RegNum) +
                     " " + regType + to_string($1.RegNum) +
                     " " + regType + to_string($3.RegNum));
 
-        if ($2.name == "<>") {
-            $$.falseList.push_back(buffer->nextQuad());
+        $$.falseList.push_back(buffer->nextQuad());
+        if ($2.name == "<>" || $2.name == "==" ||
+            $2.name == "<" | $2.name == ">")
+        {
             buffer->emit("BREQZ " + regType + to_string($$.RegNum) + " ");
-            $$.trueList.push_back(buffer->nextQuad());
-            buffer->emit("UJUMP ");
+        }
+        else if ($2.name == ">=" || $2.name == "<=")
+        {
+            buffer->emit("BNEQZ " + regType + to_string($$.RegNum) + " ");
+        }
+        else
+        {
+            printOperationalError("Invalid relative operator.");
         }
 
-        $$.falseList.push_back(buffer->nextQuad()); // And here
+        $$.trueList.push_back(buffer->nextQuad());
         buffer->emit("UJUMP ");
     }
     | LPAREN BEXP RPAREN
