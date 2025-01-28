@@ -274,7 +274,7 @@ FUNC_DEF_API:
             newFunc.isDefined = true; 
             inVariadicFunction = false;
             functionTable.insert(std::pair<string,Function>($2.name, newFunc));
-            currentFunctionName = $2.name;
+            //currentFunctionName = $2.name;
             cerr << "functionTable.size() AFTER insert: " << functionTable.size() << endl; // DEBUG: Table size after insert
             //cerr << "definedFunctions.size() AFTER insert: " << definedFunctions.size() << endl; // DEBUG: Set size after insert
 
@@ -314,7 +314,7 @@ FUNC_DEF_API:
             newFunc.paramIds = $4.paramIds;
             inVariadicFunction = false;
             newFunc.startLineImplementation = buffer->nextQuad();
-            currentFunctionName = $2.name;
+            //currentFunctionName = $2.name;
             functionTable.insert(std::pair<string,Function>($2.name, newFunc));
         }
     }
@@ -344,7 +344,7 @@ FUNC_DEF_API:
             newFunc.paramTypes = $4.paramTypes;
             newFunc.paramIds = $4.paramIds;
             inVariadicFunction = true;
-            currentFunctionName = $2.name;
+            //currentFunctionName = $2.name;
             functionTable.insert(std::pair<string,Function>($2.name, newFunc));
         }
     }
