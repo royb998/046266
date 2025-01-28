@@ -7,7 +7,7 @@
 #include <vector>
 #include <string>
 #include <map>
-#include "part3_helpers.hpp" 
+#include "part3_helpers.hpp"
 
 #define DEBUG_PARSER 1
 
@@ -28,7 +28,7 @@ extern int yylex_destroy(void);
 int printOperationalError (string err);
 int printSemanticError(string err);
 
-typedef yystype YYSTYPE;  
+typedef yystype YYSTYPE;
 extern int yylineno;
 extern char* yytext;
 int yylex(void);
@@ -55,7 +55,7 @@ bool inVariadicFunction = false;
 %token  INT FLOAT VOID
 %token  RETURN WRITE READ
 %token  WHILE IF THEN ELSE DO
-%token  ASSIGN VA_ARG ELLIPSIS 
+%token  ASSIGN VA_ARG ELLIPSIS
 %token  OR AND NOT
 %token  ID INTEGERNUM REALNUM STRING_LITERAL RELOP ADDOP MULOP
 %token  COMMA SEMICOLON LPAREN RPAREN LBRACE RBRACE COLON
@@ -76,7 +76,7 @@ bool inVariadicFunction = false;
 %left COLON
 %left SEMICOLON
 
-/* Non-terminal types 
+/* Non-terminal types
 %type  PROGRAM FDEFS FUNC_DEC_API FUNC_DEF_API FUNC_ARGLIST
 %type  DCL STLIST STMT ASSN_STMT LVAL CNTRL_STMT
 %type  BEXP EXP CALL CALL_ARGS CALL_ARGLIST
@@ -86,7 +86,7 @@ bool inVariadicFunction = false;
 
 %%
 
-PROGRAM:  
+PROGRAM:
     FDEFS
     {
         #if DEBUG_PARSER
@@ -96,14 +96,14 @@ PROGRAM:
         for(auto& func : functionTable) {
             buffer->backpatch(func.second.callingLines, func.second.startLineImplementation);
         }
-        
+
         // Add HALT AFTER all functions
         //buffer->emit("HALT"); 
     }
-    ;
+;
 
-FDEFS:    
-    FDEFS FUNC_DEF_API BLK 
+FDEFS:
+    FDEFS FUNC_DEF_API BLK
     {
         #if DEBUG_PARSER
         cerr << "FDEFS: FDEFS FUNC_DEF_API BLK" << endl;
@@ -112,15 +112,15 @@ FDEFS:
         for(auto& func : functionTable) {
             buffer->backpatch(func.second.callingLines, func.second.startLineImplementation);
         }
-        
+
         // Emit RETRN at the end of the function
         buffer->emit("RETRN");
 
-		// Initialize the relevant globals 
-		currentScopeRegsNum = 3;
-		currentScopeOffset = 0;
-		symbolTable.clear();
-		$2.paramTypes.clear();
+        // Initialize the relevant globals
+        currentScopeRegsNum = 3;
+        currentScopeOffset = 0;
+        symbolTable.clear();
+        $2.paramTypes.clear();
         inVariadicFunction = false;
     }
     | FDEFS FUNC_DEC_API
@@ -128,16 +128,16 @@ FDEFS:
         #if DEBUG_PARSER
         cerr << "FDEFS: FDEFS FUNC_DEC_API" << endl;
         #endif
-		if (functionTable[$2.name].startLineImplementation != -1) {
-			printSemanticError("function '" + $2.name + "' already isDefined");
-		}
+        if (functionTable[$2.name].startLineImplementation != -1) {
+            printSemanticError("function '" + $2.name + "' already isDefined");
+        }
         functionTable[$2.name].startLineImplementation = -1;
         functionTable[$2.name].callingLines.clear();
         symbolTable.clear();
     }
     | /* empty */ { }
-    ;
-    
+;
+
 FUNC_DEC_API:
     TYPE ID LPAREN RPAREN SEMICOLON
     {
@@ -169,7 +169,7 @@ FUNC_DEC_API:
         #if DEBUG_PARSER
         cerr << "FUNC_DEF_API: TYPE ID LPAREN M FUNC_ARGLIST RPAREN SEMICOLON" << endl;
         for (size_t i = 0; i < $4.paramTypes.size(); ++i) {
-            cerr << "    Arg " << i << ": " << $4.paramIds[i] << " (type " << $4.paramTypes[i] << ")" << endl; 
+            cerr << "    Arg " << i << ": " << $4.paramIds[i] << " (type " << $4.paramTypes[i] << ")" << endl;
         }
         #endif
         $$.name = $2.name;
@@ -215,7 +215,6 @@ FUNC_DEC_API:
             if (existingFunc.paramTypes != $4.paramTypes) {
                 printSemanticError("conflicting parameter types for variadic function declaration '" + $2.name + "'");
             }
-
         } else {
             Function newFunc;
             newFunc.returnType = $1.type;
@@ -226,7 +225,7 @@ FUNC_DEC_API:
             functionTable.insert(std::pair<string,Function>($2.name, newFunc));
         }
     }
-    ;
+;
 
 FUNC_DEF_API:
     TYPE ID LPAREN RPAREN
@@ -250,32 +249,45 @@ FUNC_DEF_API:
         cerr << "Before functionTable.find('" << $2.name << "')" << endl;
         if (functionTable.find($2.name) != functionTable.end()) {
             Function& existingFunc = functionTable[$2.name];
-            cerr << "Function '" << $2.name << "' FOUND in functionTable." << endl; 
-            cerr << "existingFunc.startLineImplementation: " << existingFunc.startLineImplementation << endl; 
+            #if DEBUG_PARSER
+            cerr << "Function '" << $2.name << "' FOUND in functionTable." << endl;
+            cerr << "existingFunc.startLineImplementation: " << existingFunc.startLineImplementation << endl;
             cerr << "existingFunc.defined: " << existingFunc.isDefined << endl; // DEBUG: defined flag value
+            #endif
+
             if (existingFunc.isDefined == true) {
+                #if DEBUG_PARSER
                 cerr << "*** Redefinition check triggered! ***" << endl;
-                printSemanticError("2redefinition of function '" + $2.name + "'");
+                #endif
+                printSemanticError("2 redefinition of function '" + $2.name + "'");
             } else {
+                #if DEBUG_PARSER
                 cerr << "Function was declared, now defining." << endl;
+                #endif
                 existingFunc.startLineImplementation = buffer->nextQuad();
                 existingFunc.isDefined = true;
             }
         } else {
+            #if DEBUG_PARSER
             cerr << "Function '" << $2.name << "' NOT found in functionTable. Creating new entry." << endl;
+            #endif
             Function newFunc;
             newFunc.returnType = $1.type;
             newFunc.startLineImplementation = $$.quad;
             newFunc.isDefined = true; // Mark as isDefined when first isDefined!
             functionTable.insert(std::pair<string,Function>($2.name, newFunc));
+            #if DEBUG_PARSER
             cerr << "functionTable.size() AFTER insert: " << functionTable.size() << endl; // DEBUG: Table size after insert
             //cerr << "definedFunctions.size() AFTER insert: " << definedFunctions.size() << endl; // DEBUG: Set size after insert
 
             cerr << "New function '" << $2.name << "' added to functionTable." << endl;
             cerr << "newFunc.startLineImplementation set to: " << newFunc.startLineImplementation << endl;
             cerr << "functionTable['" << $2.name << "'].startLineImplementation: " << functionTable[$2.name].startLineImplementation << endl;
+            #endif
         }
-         cerr << "--- FUNC_DEF_API Processing END for function: " << $2.name << " ---" << endl;
+        #if DEBUG_PARSER
+        cerr << "--- FUNC_DEF_API Processing END for function: " << $2.name << " ---" << endl;
+        #endif
     }
     | TYPE ID LPAREN FUNC_ARGLIST RPAREN
     {
@@ -291,7 +303,7 @@ FUNC_DEF_API:
         if (functionTable.find($2.name) != functionTable.end()) {
             Function& existingFunc = functionTable[$2.name];
             if (existingFunc.isDefined == true) {
-                printSemanticError("3redefinition of function '" + $2.name + "'");
+                printSemanticError("3 redefinition of function '" + $2.name + "'");
             } else {
                 existingFunc.startLineImplementation = buffer->nextQuad();
                 existingFunc.isDefined = true;
@@ -319,8 +331,8 @@ FUNC_DEF_API:
 
         if (functionTable.find($2.name) != functionTable.end()) {
             Function& existingFunc = functionTable[$2.name];
-             if (existingFunc.isDefined == true) {
-                printSemanticError("4redefinition of function '" + $2.name + "'");
+             if (existingFunc.isDefined) {
+                printSemanticError("4 redefinition of function '" + $2.name + "'");
             } else {
                 existingFunc.startLineImplementation = buffer->nextQuad();
                 existingFunc.isDefined = true;
@@ -334,7 +346,7 @@ FUNC_DEF_API:
             functionTable.insert(std::pair<string,Function>($2.name, newFunc));
         }
     }
-    ;
+;
 
 FUNC_ARGLIST:
     FUNC_ARGLIST COMMA DCL
@@ -363,7 +375,7 @@ FUNC_ARGLIST:
         $$.paramIds.push_back($1.name);
         $$.quad = buffer->nextQuad();
     }
-    ;
+;
 
 BLK:
     LBRACE STLIST M RBRACE
@@ -377,7 +389,7 @@ BLK:
         // Don't clear symbol table here - only clear at function level
         //buffer->emit(string("RETRN")); // Moved RETRN emission to the end of BLK rule
     }
-    ;
+;
 
 DCL:
     ID COLON TYPE
@@ -471,7 +483,7 @@ DCL:
         currentScopeOffset += 4;
         //$$.RegNum = addrReg; // Use addrReg directly
     }
-    ;
+;
 
 TYPE:
     INT
@@ -482,7 +494,7 @@ TYPE:
         $$.type = int_;
         $$.quad = buffer->nextQuad();
     }
-    | FLOAT 
+    | FLOAT
     {
         #if DEBUG_PARSER
         cerr << "TYPE: FLOAT" << endl;
@@ -498,7 +510,7 @@ TYPE:
         $$.type = void_t;
         $$.quad = buffer->nextQuad();
     }
-    ;
+;
 
 STLIST:
     STLIST STMT
@@ -517,7 +529,7 @@ STLIST:
         $$.quad = buffer->nextQuad();
         $$.nextList.clear();  // Initialize empty nextList
     }
-    ;
+;
 
 STMT:
     DCL SEMICOLON
@@ -529,8 +541,8 @@ STMT:
         $$.type = $1.type;
         $$.nextList.clear();
     }
-    | ASSN_STMT      
-    { 
+    | ASSN_STMT
+    {
         #if DEBUG_PARSER
         cerr << "STMT: ASSN_STMT" << endl;
         #endif
@@ -547,7 +559,7 @@ STMT:
         $$.type = $1.type;
         $$.nextList.clear();
     }
-    | CNTRL_STMT     
+    | CNTRL_STMT
     {
         #if DEBUG_PARSER
         cerr << "STMT: CNTRL_STMT" << endl;
@@ -563,7 +575,7 @@ STMT:
         $$.quad = $1.quad;
         $$.nextList.clear(); 
     }
-    | WRITE_STMT     
+    | WRITE_STMT
     {
         #if DEBUG_PARSER
         cerr << "STMT: WRITE_STMT" << endl;
@@ -571,7 +583,7 @@ STMT:
         $$.quad = $1.quad;
         $$.nextList.clear();
     }
-    | RETURN_STMT    
+    | RETURN_STMT
     {
         #if DEBUG_PARSER
         cerr << "STMT: RETURN_STMT" << endl;
@@ -580,14 +592,14 @@ STMT:
         $$.nextList.clear();
         
         if (!functionTable.empty()) {
-            string currentFunc = ""; 
+            string currentFunc = "";
             for (auto& pair : functionTable) {
                 if (pair.second.startLineImplementation != -1) {
                     currentFunc = pair.first;
                     break;
                 }
             }
-            
+
             if (!currentFunc.empty()) {
                 if ($1.type != functionTable[currentFunc].returnType) {
                     printSemanticError("return type mismatch in function '" + currentFunc + "'");
@@ -595,7 +607,7 @@ STMT:
             }
         }
     }
-    | BLK            
+    | BLK
     {
         #if DEBUG_PARSER
         cerr << "STMT: BLK" << endl;
@@ -603,7 +615,7 @@ STMT:
         $$.quad = $1.quad;
         $$.nextList = $1.nextList;
     }
-    ;
+;
 
 RETURN_STMT:
     RETURN EXP SEMICOLON
@@ -613,7 +625,7 @@ RETURN_STMT:
         #endif
         $$.quad = buffer->nextQuad();
         $$.type = $2.type;  // Use $$ to set the type
-        
+
         if ($2.type == float_) {
             buffer->emit(string("COPYF F0 F") + to_string($2.RegNum));  // Copy result to F0
         } else {
@@ -627,10 +639,10 @@ RETURN_STMT:
         cerr << "RETURN_STMT: RETURN SEMICOLON" << endl;
         #endif
         $$.quad = buffer->nextQuad();
-        $$.type = void_t;      
-        buffer->emit(string("RETRN")); 
+        $$.type = void_t;
+        buffer->emit(string("RETRN"));
     }
-    ;
+;
 
 WRITE_STMT:
     WRITE LPAREN EXP RPAREN SEMICOLON
@@ -639,7 +651,7 @@ WRITE_STMT:
         cerr << "WRITE_STMT: WRITE LPAREN EXP RPAREN SEMICOLON" << endl;
         #endif
         $$.quad = buffer->nextQuad();
-        
+
         if ($3.type == float_) {
             buffer->emit(string("PRNTF F") + to_string($3.RegNum));
         } else if ($3.type == int_) {
@@ -655,13 +667,13 @@ WRITE_STMT:
         #endif
         string str = $3.name;
         str = str.substr(1, str.length() - 2); // Remove surrounding quotes
-        
+
         for (size_t i = 0; i < str.length(); i++) {
             if (str[i] == '\\') {
                 // Handle escape sequences
                 if (i+1 >= str.length()) break;
                 i++; // Skip backslash
-                
+
                 switch(str[i]) {
                     case 'n':  // Newline
                         buffer->emit("PRNTC 10");
@@ -681,7 +693,7 @@ WRITE_STMT:
             }
         }
     }
-    ;
+;
 
 READ_STMT:
     READ LPAREN LVAL RPAREN SEMICOLON
@@ -736,7 +748,7 @@ ASSN_STMT:
                 buffer->emit("STOREI2F I" + to_string(valReg) + " F" + to_string(newReg));
                 buffer->emit("STORF F" + to_string(newReg) + " I" + to_string(destBase) + " 0");
             }
-        } 
+        }
         // else int-lval
         else {
             if (expType == int_) {
@@ -746,12 +758,12 @@ ASSN_STMT:
                 buffer->emit("STOREF2I F" + to_string(valReg) + " I" + to_string(newReg));
                 buffer->emit("STORI I" + to_string(newReg) + " I" + to_string(destBase) + " 0");
             }
-        }
+        }*/
 
         $$.type = lvalType;
         $$.RegNum = destBase;
     }
-    ;
+;
 
 LVAL:
     ID
@@ -761,7 +773,7 @@ LVAL:
         #endif
         $$.name = $1.name;
         $$.quad = buffer->nextQuad();
-        
+
         if (symbolTable.find($1.name) == symbolTable.end()) {
             printSemanticError("undefined variable '" + $1.name + "'");
         } else {
@@ -775,13 +787,13 @@ LVAL:
                         to_string(sym.offset[sym.depth]));
         }
     }
-    ;
+;
 
 CNTRL_STMT:
-    IF BEXP THEN M STMT ELSE N M STMT
+    IF BEXP THEN M STMT N ELSE M STMT
     {
         #if DEBUG_PARSER
-        cerr << "CNTRL_STMT:  IF BEXP THEN M STMT ELSE N M STMT" << endl;
+        cerr << "CNTRL_STMT:  IF BEXP THEN M STMT N ELSE M STMT" << endl;
         #endif
         $$.quad = buffer->nextQuad();
         
@@ -804,17 +816,17 @@ CNTRL_STMT:
         buffer->backpatch($2.trueList, $4.quad);
         $$.nextList = merge($2.falseList, $4.nextList);
     }
-    | WHILE M BEXP DO N STMT
+    | WHILE M BEXP DO M STMT
     {
         #if DEBUG_PARSER
-        cerr << "CNTRL_STMT: WHILE M BEXP DO N STMT" << endl;
+        cerr << "CNTRL_STMT: WHILE M BEXP DO M STMT" << endl;
         #endif
         buffer->backpatch($3.trueList, $5.quad);
         buffer->emit("UJUMP " + to_string($2.quad));
         buffer->backpatch($3.falseList, $4.quad); // Patch falseList to N marker (after DO)
         $$.nextList = $5.nextList; // nextList of WHILE is nextList of STMT (body)
     }
-    ;
+;
 
 BEXP:
     BEXP OR BEXP
@@ -842,7 +854,7 @@ BEXP:
         #if DEBUG_PARSER
         cerr << "BEXP: NOT BEXP" << endl;
         #endif
-        $$.quad = buffer->nextQuad();    
+        $$.quad = buffer->nextQuad();
         $$.trueList = $2.falseList;
         $$.falseList = $2.trueList;
     }
@@ -868,13 +880,9 @@ BEXP:
         else if ($2.name == "<")   opName = "SLET"; // Assuming '<' uses SLET as per table and description (If B<C then A=1 else A=0) -  needs clarification if separate SLT is intended. If separate SLT is needed, table is incomplete.
         else if ($2.name == ">")   opName = "SGRT"; // Assuming '>' uses SGRT as per table and description (If B>C then A=1 else A=0) - needs clarification if separate SGT is intended. If separate SGT is needed, table is incomplete.
 
-
-
         buffer->emit(opName + regType + " " + regType + to_string($$.RegNum) +
                     " " + regType + to_string($1.RegNum) +
                     " " + regType + to_string($3.RegNum));
-
-
 
         if ($2.name == "<>") {
             $$.falseList.push_back(buffer->nextQuad());
@@ -895,7 +903,7 @@ BEXP:
         $$.trueList = $2.trueList;
         $$.falseList = $2.falseList;
     }
-    ;
+;
 
 EXP:
     EXP ADDOP EXP
@@ -910,11 +918,11 @@ EXP:
         }
         $$.type = ($1.type == float_ || $3.type == float_) ? float_ : int_;
         $$.RegNum = currentScopeRegsNum++;
-        
+
         if ($$.type == float_) {
             int reg1 = $1.RegNum;
             int reg2 = $3.RegNum;
-            
+
             if ($1.type == int_) {
                 int tempReg = currentScopeRegsNum++;
                 buffer->emit(string("CITOF F") + to_string(tempReg) + string(" I") + to_string($1.RegNum));
@@ -1008,7 +1016,7 @@ EXP:
         $$.quad = buffer->nextQuad();
         $$.type = $2.type;
         $$.RegNum = currentScopeRegsNum++;
-        
+
         if ($2.type == float_ && $4.type == int_) {
             buffer->emit(string("CITOF F") + to_string($$.RegNum) + string(" I") + to_string($4.RegNum));
         } else if ($2.type == int_ && $4.type == float_) {
@@ -1027,18 +1035,18 @@ EXP:
         cerr << "EXP: ID" << endl;
         #endif
         $$.quad = buffer->nextQuad();
-        
+
         if (symbolTable.find($1.name) == symbolTable.end()) {
             printSemanticError("unisDefined variable '" + $1.name + "'");
             return 1;
         }
-        
+
         Symbol& sym = symbolTable[$1.name];
         if (sym.type.find(sym.depth) == sym.type.end()) {
             printSemanticError("unisDefined variable '" + $1.name + "' at current scope");
             return 1;
         }
-        
+
         $$.type = sym.type[sym.depth];
         $$.RegNum = currentScopeRegsNum++;
         $$.name = $1.name;
@@ -1070,10 +1078,10 @@ EXP:
         #endif
         $$ = $1;
     }
-    ;
+;
 
 NUM:
-    INTEGERNUM  
+    INTEGERNUM
     {
         #if DEBUG_PARSER
         cerr << "NUM: INTEGERNUM" << endl;
@@ -1083,7 +1091,7 @@ NUM:
         buffer->emit(string("LOADI I") + to_string($$.RegNum) + string(" ") + $1.name);
         $$.quad = buffer->nextQuad();
     }
-    | REALNUM       
+    | REALNUM
     {
         #if DEBUG_PARSER
         cerr << "NUM: REALNUM" << endl;
@@ -1093,7 +1101,7 @@ NUM:
         buffer->emit(string("LOADF F") + to_string($$.RegNum) + string(" ") + $1.name);
         $$.quad = buffer->nextQuad();
     }
-    ;
+;
 
 CALL:
     ID LPAREN CALL_ARGS RPAREN
@@ -1102,14 +1110,14 @@ CALL:
         cerr << "CALL: ID LPAREN CALL_ARGS RPAREN" << endl;
         #endif
         $$.quad = buffer->nextQuad();
-        
+
         if (functionTable.find($1.name) == functionTable.end()) {
             printSemanticError("unisDefined function '" + $1.name + "'");
             return 1;
         }
-        
+
         Function& func = functionTable[$1.name];
-        
+
         for (size_t i = 0; i < $3.paramTypes.size() && i < func.paramTypes.size(); i++) {
             if ($3.paramTypes[i] == int_ && func.paramTypes[i] == float_) {
                 int newReg = currentScopeRegsNum++;
@@ -1117,11 +1125,11 @@ CALL:
                 $3.paramRegs[i] = newReg;  // Update the parameter register
             }
         }
-        
+
         int callQuad = buffer->nextQuad();  // Line number of JLINK
         buffer->emit("JLINK " + $1.name);   // Emit call instruction
         func.callingLines.push_back(callQuad); // Track call site
-        
+
         $$.type = func.returnType;
         if ($$.type != void_t) {  // Use $$ for return value handling
             $$.RegNum = currentScopeRegsNum++;
@@ -1132,7 +1140,7 @@ CALL:
             }
         }
     }
-    ;
+;
 
 VA_MATERIALISE:
     VA_ARG LPAREN TYPE COMMA EXP RPAREN
@@ -1168,7 +1176,7 @@ VA_MATERIALISE:
         buffer->emit("HALT");
         buffer->backpatch({errorQuad}, buffer->nextQuad());
     }
-    ;
+;
 
 CALL_ARGS:
     CALL_ARGLIST
@@ -1187,7 +1195,7 @@ CALL_ARGS:
         $$.paramRegs.clear(); 
         $$.quad = buffer->nextQuad();
     }
-    ;
+;
 
 CALL_ARGLIST:
     CALL_ARGLIST COMMA EXP
@@ -1204,7 +1212,7 @@ CALL_ARGLIST:
         if ($3.type == int_) { // Int to Float Conversion if needed
             int newReg = currentScopeRegsNum++;
             buffer->emit(string("STOREI2F I") + to_string($3.RegNum) + string(" F") + to_string(newReg));
-            $$.paramRegs.back() = newReg;  
+            $$.paramRegs.back() = newReg;
         }
     }
     | EXP
@@ -1219,22 +1227,29 @@ CALL_ARGLIST:
         if ($1.type == int_) { // Int to Float Conversion if needed
             int newReg = currentScopeRegsNum++;
             buffer->emit(string("STOREI2F I") + to_string($1.RegNum) + string(" F") + to_string(newReg));
-            $$.paramRegs.back() = newReg; 
+            $$.paramRegs.back() = newReg;
         }
     }
-    ;
+;
 
-	M : /* EPSILON */ {
-		$$.quad = buffer->nextQuad();
-	}
-	;
- 
+M :
+    /* EPSILON */
+    {
+        //#if DEBUG_PARSER
+        //buffer->emit(";; M -> epsilon ;;");
+        //#endif
+        $$.quad = buffer->nextQuad();
+    }
+;
 
-	N : /* EPSILON */ {
-		$$.nextList.push_back(buffer->nextQuad());
-		buffer->emit("UJUMP ");
-	}
-	;
+
+N :
+    /* EPSILON */
+    {
+        $$.nextList.push_back(buffer->nextQuad());
+        buffer->emit("UJUMP ");
+    }
+;
 %%
 
 int main(int argc, char* argv[]) {
@@ -1245,7 +1260,7 @@ int main(int argc, char* argv[]) {
     }
 
     string inputFileName = argv[1];
-    
+
     // Check file extension
     size_t lastindex = inputFileName.find_last_of(".");
     if (lastindex == string::npos || inputFileName.substr(lastindex) != ".cmm") {
@@ -1268,14 +1283,14 @@ int main(int argc, char* argv[]) {
     if (yyparse() != 0) {
         // Error handling is done in yyerror
         fclose(yyin);
-        yylex_destroy();  
+        yylex_destroy();
         delete buffer;
         return 1;
     }
 
     // Generate header
     string header = "<header>\n";
-    
+
     // Generate unimplemented functions list
     string uimp = "<unimplemented>";
     for (const auto& func : functionTable) {
@@ -1313,7 +1328,7 @@ int main(int argc, char* argv[]) {
     if (!rskFile.is_open()) {
         cerr << "Operational error: cannot create output file" << endl;
         fclose(yyin);
-        yylex_destroy();  
+        yylex_destroy();
         delete buffer;
         exit(OPERATIONAL_ERROR);
     }
@@ -1333,11 +1348,11 @@ void yyerror(const char *s) {
 }
 
 int printOperationalError (string err) {
-	cerr << "Operational error: " << err << endl;
-	exit(OPERATIONAL_ERROR);
+    cerr << "Operational error: " << err << endl;
+    exit(OPERATIONAL_ERROR);
 }
 
 int printSemanticError (string err) {
-	cerr << "Semantic error: " << err << " in line number " << yylineno << endl;
-	exit(SEMANTIC_ERROR);
+    cerr << "Semantic error: " << err << " in line number " << yylineno << endl;
+    exit(SEMANTIC_ERROR);
 }
