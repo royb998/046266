@@ -117,7 +117,7 @@ FDEFS:
 
         buffer->backpatch($3.nextList, buffer->nextQuad());
         // Emit RETRN at the end of the function
-        buffer->emit("RETRN");
+        //buffer->emit("RETRN");
 
         // Initialize the relevant globals
         currentScopeRegsNum = 3;
@@ -462,7 +462,7 @@ DCL:
         #endif
         $$.name = $1.name;
         $$.type = $3.type;
-        $$.quad = buffer->nextQuad();
+        //$$.quad = buffer->nextQuad();
 
         if (symbolTable.find($1.name) == symbolTable.end())
         {
@@ -683,7 +683,7 @@ RETURN_STMT:
         $$.type = $2.type;  // Use $$ to set the type
 
         if ($2.type == float_) {
-            buffer->emit(string("STORF F" + to_string($2.RegNum) + " I1 -4"));  // Copy result to F0
+            buffer->emit(string("STORF F" + to_string($2.RegNum) + " F1 -4"));  // Copy result to F0
         } else {
             buffer->emit(string("STORI I" + to_string($2.RegNum) + " I1 -4"));  // Copy result to I0
         }
@@ -758,16 +758,29 @@ READ_STMT:
         #if DEBUG_PARSER
         cerr << "READ_STMT: READ LPAREN LVAL RPAREN SEMICOLON" << endl;
         #endif
+
+        // Get the symbol information for the variable being read
         Symbol& sym = symbolTable[$3.name];
         int offset = sym.offset[sym.depth];
 
+        // Allocate a temporary register for the read value
         int tempReg = currentScopeRegsNum++;
-        // Use sym.type instead of varType
+
         if (sym.type[sym.depth] == float_) {
+            // Read a float value into a float register
             buffer->emit("READF F" + to_string(tempReg));
-            buffer->emit("STORF F" + to_string(tempReg) + " I1 " + to_string(offset));
+
+            // Convert I1 (frame pointer) to a float register
+            int floatBaseReg = currentScopeRegsNum++;
+            buffer->emit("CITOF F" + to_string(floatBaseReg) + " I1");
+
+            // Store the float value in memory
+            buffer->emit("STORF F" + to_string(tempReg) + " F" + to_string(floatBaseReg) + " " + to_string(offset));
         } else {
+            // Read an integer value into an integer register
             buffer->emit("READI I" + to_string(tempReg));
+
+            // Store the integer value in memory
             buffer->emit("STORI I" + to_string(tempReg) + " I1 " + to_string(offset));
         }
     }
@@ -793,24 +806,32 @@ ASSN_STMT:
         int dest_offset = sym.offset[sym.depth];
         int src_reg   = $3.RegNum;
 
-        if (float_ == lvalType)
-        {
-            if (int_ == expType)
-            {
+
+        if (lvalType == float_) {
+            // Handle float LVAL
+            if (expType == int_) {
+                // Convert integer expression to float
                 int temp_reg = currentScopeRegsNum++;
                 buffer->emit("CITOF F" + to_string(temp_reg) + " I" + to_string(src_reg));
                 src_reg = temp_reg;
             }
-            buffer->emit("STORF F" + to_string(src_reg) + " I " + to_string(dest_offset));
-        }
-        else // int_ == lvalType
-        {
-            if (float_ == expType)
-            {
+
+            // Convert I1 (base pointer) to a float register
+            int floatBaseReg = currentScopeRegsNum++;
+            buffer->emit("CITOF F" + to_string(floatBaseReg) + " I1");
+
+            // Store the float value in memory
+            buffer->emit("STORF F" + to_string(src_reg) + " F" + to_string(floatBaseReg) + " " + to_string(dest_offset));
+        } else if (lvalType == int_) {
+            // Handle integer LVAL
+            if (expType == float_) {
+                // Convert float expression to integer
                 int temp_reg = currentScopeRegsNum++;
-                buffer->emit("CFTOI I" + to_string(temp_reg) + " I1" + to_string(src_reg));
+                buffer->emit("CFTOI I" + to_string(temp_reg) + " F" + to_string(src_reg));
                 src_reg = temp_reg;
             }
+
+            // Store the integer value in memory
             buffer->emit("STORI I" + to_string(src_reg) + " I1 " + to_string(dest_offset));
         }
 
@@ -927,35 +948,48 @@ BEXP:
 			printSemanticError("can't perform this operation on 'void' type arguments");
         }
 
-        $$.trueList.push_back(buffer->nextQuad() + 2); 
-        $$.falseList.push_back(buffer->nextQuad() + 1);
 
         $$.RegNum = currentScopeRegsNum++;
-        string regType = ($1.type == float_) ? "F" : "I";
         string opName;
 
         if ($2.name == "==")       opName = "SEQU";
         else if ($2.name == "<>")  opName = "SNEQ";
         else if ($2.name == "<=" || $2.name == ">")  opName = "SGRT"; 
         else if ($2.name == ">=" || $2.name == "<")  opName = "SLET"; 
+        else printOperationalError("Invalid relative operator.");
 
-        buffer->emit(opName + regType + " " + regType + to_string($$.RegNum) +
-                    " " + regType + to_string($1.RegNum) +
-                    " " + regType + to_string($3.RegNum));
 
-        $$.falseList.push_back(buffer->nextQuad());
-        if ($2.name == "<>" || $2.name == "==" ||
-            $2.name == "<" || $2.name == ">")
-        {
-            buffer->emit("BREQZ " + regType + to_string($$.RegNum) + " ");
-        }
-        else if ($2.name == ">=" || $2.name == "<=")
-        {
-            buffer->emit("BNEQZ " + regType + to_string($$.RegNum) + " ");
-        }
-        else
-        {
-            printOperationalError("Invalid relative operator.");
+        // Emit the compare instruction: we want I$.RegNum no matter float or int
+    //int cmpFloatReg = -1;
+    if ($1.type == float_) {
+        int cmpFloatReg = currentScopeRegsNum++;
+        // Compare floats => produce int in I$.RegNum
+        buffer->emit(opName + "F F" + to_string(cmpFloatReg)
+                     + " F" + to_string($1.RegNum)
+                     + " F" + to_string($3.RegNum));
+
+        buffer->emit("CFTOI I" + to_string($$.RegNum) +
+                     " F" + to_string(cmpFloatReg));
+    } else {
+        // Compare ints => produce int in I$.RegNum
+        buffer->emit(opName + "I I" + to_string($$.RegNum)
+                     + " I" + to_string($1.RegNum)
+                     + " I" + to_string($3.RegNum));
+    }
+
+    // Next line does the branch on that integer result
+    // If the op is "==", for instance, the result is 1 or 0 in I$.RegNum
+
+    $$.falseList.push_back(buffer->nextQuad());
+    if ($2.name == "<>" || $2.name == "==" ||
+        $2.name == "<"  || $2.name == ">")
+    {
+        // Branch if result==0
+        buffer->emit("BREQZ I" + to_string($$.RegNum) + " ");
+    }
+    else {
+        // Branch if result!=0
+        buffer->emit("BNEQZ I" + to_string($$.RegNum) + " ");
         }
 
         $$.trueList.push_back(buffer->nextQuad());
@@ -1003,6 +1037,17 @@ EXP:
                 buffer->emit(string("CITOF F") + to_string(tempReg) + string(" I") + to_string($3.RegNum));
                 reg2 = tempReg;
             }
+        } else {
+            if ($1.type == float_) {
+                int tempReg = currentScopeRegsNum++;
+                buffer->emit(string("CFTOI I") + to_string(tempReg) + string(" F") + to_string($1.RegNum));
+                reg1 = tempReg;
+            }
+            if ($3.type == float_) {
+                int tempReg = currentScopeRegsNum++;
+                buffer->emit(string("CFTOI I") + to_string(tempReg) + string(" F") + to_string($3.RegNum));
+                reg2 = tempReg;
+            }
         }
 
         buffer->emit(opName + regType + " " + regType + to_string($$.RegNum) +  
@@ -1032,13 +1077,24 @@ EXP:
             // Convert left operand to float if needed
             if ($1.type == int_) {
                 int tempReg = currentScopeRegsNum++;
-                buffer->emit("CITOF F" + to_string(tempReg) + " I" + to_string(reg1));
+                buffer->emit(string("CITOF F") + to_string(tempReg) + string("I") + to_string($1.RegNum));
                 reg1 = tempReg;
             }
             // Convert right operand to float if needed
             if ($3.type == int_) {
                 int tempReg = currentScopeRegsNum++;
-                buffer->emit("CITOF F" + to_string(tempReg) + " I" + to_string(reg2));
+                buffer->emit(string("CITOF F") + to_string(tempReg) + string(" I") + to_string($3.RegNum));
+                reg2 = tempReg;
+            }
+        } else {
+            if ($1.type == float_) {
+                int tempReg = currentScopeRegsNum++;
+                buffer->emit(string("CFTOI I") + to_string(tempReg) + string(" F") + to_string($1.RegNum));
+                reg1 = tempReg;
+            }
+            if ($3.type == float_) {
+                int tempReg = currentScopeRegsNum++;
+                buffer->emit(string("CFTOI I") + to_string(tempReg) + string(" F") + to_string($3.RegNum));
                 reg2 = tempReg;
             }
         }
@@ -1101,9 +1157,9 @@ EXP:
         $$.name = $1.name;
 
         if ($$.type == float_) {
-            buffer->emit(string("LOADF F") + 
-                         to_string($$.RegNum) + string(" I1 ") +
-                         to_string(sym.offset[sym.depth]));
+            int floatBaseReg = currentScopeRegsNum++;
+            buffer->emit("CITOF F" + to_string(floatBaseReg) + " I1");  // Convert I1 to F
+            buffer->emit("LOADF F" + to_string($$.RegNum) + " F" + to_string(floatBaseReg) + " " + to_string(sym.offset[sym.depth]));
         } else {
             buffer->emit(string("LOADI I") + 
                          to_string($$.RegNum) + string(" I1 ") +
@@ -1179,8 +1235,14 @@ CALL:
         Function &func = functionTable[$1.name];
 
         // 2) CHECK # OF ARGUMENTS MATCHES
-        if (func.paramTypes.size() != $3.paramTypes.size()) {
-            printSemanticError("incorrect number of arguments of function '" + $1.name + "'");
+        if (func.indexNumVAParams == -1) { //not variadic func
+            if (func.paramTypes.size() != $3.paramTypes.size()) {
+                printSemanticError("incorrect number of arguments of function '" + $1.name + "'");
+            }
+        } else {
+            if ($3.paramTypes.empty() || $3.paramTypes[0] != int_) {
+                printSemanticError("variadic call must pass an int as the first argument (the count of varargs)");
+            }
         }
 
         for (int i = 0; i < (int)func.paramTypes.size(); i++) {
@@ -1197,14 +1259,20 @@ CALL:
             currentScopeOffset += shiftSize;
         }
 
-        // We'll accumulate how many bytes we push
         int totalBytesPushed = 0;
 
-        // SAVE ALL CALLER REGISTERS ON THE STACK
+
+
+        //SAVE ALL CALLER REGISTERS ON THE STACK
+        int totalBytesPushed = 0;
+        int floatBaseReg = currentScopeRegsNum++; // Temporary float base register
+        buffer->emit("CITOF F2 I2"); // Convert I2 to F2 for float operations
         for (int regID = 0; regID < currentScopeRegsNum; regID++) {
-            buffer->emit("STORI I" + to_string(regID) +
-                         " I2 " + to_string(totalBytesPushed));
-            totalBytesPushed += 4;  // each register is 4 bytes
+            // Save integer registers
+            buffer->emit("STORI I" + to_string(regID) + " I2 " + to_string(totalBytesPushed));
+            // Save float registers
+            buffer->emit("STORF F" + to_string(regID) + " F2 " + to_string(totalBytesPushed));
+            totalBytesPushed += 4; // Each register is 4 bytes
         }
         totalBytesPushed += 4; 
 
@@ -1214,28 +1282,32 @@ CALL:
         $3.paramRegs.clear();
 		$3.paramTypes.clear();
         
-        // Calculate the offset in memory to store each parameter
-        totalBytesPushed += 4 * callArgTypes.size();
 
         // ADJUST THE STACK POINTER (I2) FOR ALL THE SPACE WE RESERVED
         buffer->emit("ADD2I I2 I2 " + to_string(totalBytesPushed));
+        buffer->emit("ADD2F F2 F2 " + to_string(totalBytesPushed));
         currentScopeOffset += totalBytesPushed;
 
         // SET THE FRAME POINTER (I1 = I2)
         buffer->emit("COPYI I1 I2");
 
+        buffer->emit("CITOF F1 I1");
+    
+
         for (size_t i = 0; i < callArgTypes.size(); i++) {
             int finalReg = callArgRegs[i];
-            Type dstT = func.paramTypes[i];
-            
-            string storInstr = (dstT == float_) ? "STORF" : "STORI";
-            char letter = (dstT == float_) ? 'F' : 'I';
-            
-            // First param at -8, second at -12, etc
-            int paramOffset = -8 - (i * 4);  
-            
-            buffer->emit(storInstr + " " + letter + to_string(finalReg) + 
-                        " I1 " + to_string(paramOffset));
+            Type paramType = callArgTypes[i];
+
+            // Calculate the offset for the parameter
+            int paramOffset = -8 - (i * 4);
+
+            if (paramType == float_) {
+                // Store float parameters
+                buffer->emit("STORF F" + to_string(finalReg) + " F1 " + to_string(paramOffset));
+            } else {
+                // Store integer parameters
+                buffer->emit("STORI I" + to_string(finalReg) + " I1 " + to_string(paramOffset));
+            }
         }
 
         // EMIT THE CALL (JLINK). We fill with backpatch 
@@ -1244,21 +1316,26 @@ CALL:
 
         // ON RETURN: RESTORE THE STACK FRAME (I2 = I1)
         buffer->emit("COPYI I2 I1");
+        buffer->emit("CITOF F2 I2");
 
-        // LOAD THE RETURN VALUE (IF NOT void)
-        $$.type = func.returnType; 
-        $$.RegNum = currentScopeRegsNum;
+        // 8) LOAD THE RETURN VALUE (IF NOT void)
+        $$.type = func.returnType;
+        $$.RegNum = currentScopeRegsNum++;
         if ($$.type != void_t) {
-            string regLetter    = ($$.type == float_) ? "F" : "I"; 
-            string loadMnemonic = ($$.type == float_) ? "LOADF" : "LOADI"; 
-
-            buffer->emit(loadMnemonic + " " 
-                         + regLetter + to_string($$.RegNum) + " " 
-                         + "I1 -4");
+            if ($$.type == float_) {
+                // Convert I1 to a float register for float return values
+                //int floatBaseReg = currentScopeRegsNum++;
+                //buffer->emit("CITOF F1 I1");
+                buffer->emit("LOADF F" + to_string($$.RegNum) + " F1 -4");
+            } else {
+                // Load integer return value directly
+                buffer->emit("LOADI I" + to_string($$.RegNum) + " I1 -4");
+            }
         }
 
         // DEALLOCATE THE SPACE WE ADDED
         buffer->emit("SUBTI I2 I2 " + to_string(totalBytesPushed));
+        buffer->emit("SUBTF F2 F2 " + to_string(totalBytesPushed));
 
         // RESTORE ALL CALLER REGISTERS
         int restoreOffset = 0;
@@ -1270,6 +1347,7 @@ CALL:
             }
             buffer->emit("LOADI I" + to_string(regID) +
                          " I2 " + to_string(restoreOffset));
+            buffer->emit("LOADF F" + to_string(regID) + " F2 " + to_string(restoreOffset));
             restoreOffset += 4;
         }
         currentScopeRegsNum++;	
