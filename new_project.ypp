@@ -42,6 +42,7 @@ int currentScopeRegsNum = 3;
 int currentScopeOffset = 0;
 Type currentReturnType;
 bool inVariadicFunction = false;
+bool isVariadicArgument = false;
 
 int current_variable_offset = 0;
 int current_param_offset = -8;
@@ -365,6 +366,8 @@ FUNC_DEF_API:
             }
         } else {
             Function newFunc;
+            inVariadicFunction = true;
+            isVariadicArgument = true;
             newFunc.isDefined = true;
             newFunc.returnType = $1.type;
             newFunc.paramTypes = $4.paramTypes;
@@ -375,14 +378,7 @@ FUNC_DEF_API:
             functionTable.insert(std::pair<string,Function>($2.name, newFunc));
         }
 
-        int num_va_params_index = $4.paramTypes.size();
-        int num_va_params_reg = currentScopeRegsNum;
-        ++currentScopeRegsNum;
-        if (3 != num_va_params_reg)
-        {
-            printOperationalError("Something went wrong. VA num reg should be 3.");
-        }
-        buffer->emit("COPYI I" + to_string(num_va_params_reg) + " " + to_string(num_va_params_index));
+        buffer->emit("LOADI I3 I1 -8");
     }
 ;
 
@@ -1205,7 +1201,9 @@ NUM:
         #endif
         $$.type = int_;
         $$.RegNum = currentScopeRegsNum++;
-        buffer->emit(string("COPYI I") + to_string($$.RegNum) + string(" ") + $1.name);
+        if (!isVariadicArgument) {
+            buffer->emit(string("COPYI I") + to_string($$.RegNum) + string(" ") + $1.name);
+        }
         $$.quad = buffer->nextQuad();
     }
     | REALNUM
@@ -1251,6 +1249,11 @@ CALL:
             }
         }
     
+        // Set the flag for variadic arguments
+        if (func.indexNumVAParams != -1) { //need to check if needed
+            isVariadicArgument = true;
+        }
+    
         // ALIGN STACK IF NEEDED (4-BYTE)
         int shiftSize = 0;
         if (currentScopeOffset % 4 != 0) {
@@ -1258,10 +1261,6 @@ CALL:
             buffer->emit("ADD2I I2 I2 " + to_string(shiftSize));
             currentScopeOffset += shiftSize;
         }
-
-        int totalBytesPushed = 0;
-
-
 
         //SAVE ALL CALLER REGISTERS ON THE STACK
         int totalBytesPushed = 0;
@@ -1282,6 +1281,7 @@ CALL:
         $3.paramRegs.clear();
 		$3.paramTypes.clear();
         
+        isVariadicArgument = false;
 
         // ADJUST THE STACK POINTER (I2) FOR ALL THE SPACE WE RESERVED
         buffer->emit("ADD2I I2 I2 " + to_string(totalBytesPushed));
@@ -1290,7 +1290,6 @@ CALL:
 
         // SET THE FRAME POINTER (I1 = I2)
         buffer->emit("COPYI I1 I2");
-
         buffer->emit("CITOF F1 I1");
     
 
@@ -1374,17 +1373,29 @@ VA_MATERIALISE:
         runtime_errors.push_back(buffer->nextQuad());
         buffer->emit("BNEQZ I" + to_string(tempReg1) + " "); // Jump if index < 0
 
-        // Check index < n (n is in I3 as defined in function declaration)
-        buffer->emit("SLETI I" + to_string(tempReg2) + " I3 I" + to_string($5.RegNum));
-        runtime_errors.push_back(buffer->nextQuad());
-        buffer->emit("BREQZ I" + to_string(tempReg2) + " "); // Jump if index >= n
 
-        // Proceed if valid
-        int va_param_index = currentScopeRegsNum++;
-        int va_param_offset = currentScopeRegsNum++;
-        buffer->emit("ADD2I I" + to_string(va_param_index) + " I3 I" + to_string($5.RegNum));
-        buffer->emit("MULTI I" + to_string(va_param_offset) + " I" + to_string(va_param_index) + " 4"); // turn index into offset
-        buffer->emit("LOADI I" + to_string($$.RegNum) + " I3 I" + to_string(va_param_offset));
+        buffer->emit("SLETI I" + to_string(tempReg2)
+             + " I" + to_string($5.RegNum)
+             + " I3");
+        runtime_errors.push_back(buffer->nextQuad());
+        buffer->emit("BREQZ I" + to_string(tempReg2) + " "); // Jump if i >= n
+
+        // Calculate final offset: -8 - (index + 1) * 4
+        int offsetReg = currentScopeRegsNum++;
+        buffer->emit("ADD2I I" + to_string(offsetReg) + " I" + to_string($5.RegNum) + " 1"); // index + 1
+        buffer->emit("MULTI I" + to_string(offsetReg) + " I" + to_string(offsetReg) + " 4"); // * 4
+        buffer->emit("SUBTI I" + to_string(offsetReg) + " 0 I" + to_string(offsetReg)); // negate
+        buffer->emit("SUBTI I" + to_string(offsetReg) + " I" + to_string(offsetReg) + " 8"); // subtract 8
+
+        // Load the value using the calculated offset
+        
+        if ($3.type == int_) {
+            buffer->emit("LOADI I" + to_string($$.RegNum) + " I1 I" + to_string(offsetReg));
+        } else if ($3.type == float_) {
+            int floatBaseReg = currentScopeRegsNum++;
+            buffer->emit("CITOF F" + to_string(floatBaseReg) + " I" + to_string(offsetReg));
+            buffer->emit("LOADF F" + to_string($$.RegNum) + " F1" + " F" +to_string(floatBaseReg));
+        }
 
         // Error handling block
         int runtime_error_skip = buffer->nextQuad();
