@@ -9,7 +9,7 @@
 #include <map>
 #include "part3_helpers.hpp"
 
-#define DEBUG_PARSER 1
+#define DEBUG_PARSER 0
 
 #ifdef __cplusplus
 extern "C" {
@@ -118,7 +118,7 @@ FDEFS:
 
         buffer->backpatch($3.nextList, buffer->nextQuad());
         // Emit RETRN at the end of the function
-        //buffer->emit("RETRN");
+        buffer->emit("RETRN");
 
         // Initialize the relevant globals
         currentScopeRegsNum = 3;
@@ -159,6 +159,8 @@ FUNC_DEC_API:
             Function newFunc;
             newFunc.returnType = $1.type;
             newFunc.startLineImplementation = -1;
+            newFunc.indexNumVAParams = -1;
+            newFunc.startIndexVAParams = -1;
             newFunc.isDefined = false; // Mark as NOT isDefined for declaration
             functionTable.insert(std::pair<string,Function>($2.name, newFunc));
         }
@@ -191,6 +193,8 @@ FUNC_DEC_API:
             newFunc.paramTypes = $4.paramTypes;
             newFunc.paramIds = $4.paramIds;
             newFunc.startLineImplementation = -1;
+            newFunc.indexNumVAParams = -1;
+            newFunc.startIndexVAParams = -1;
             newFunc.isDefined = false; // Mark as NOT isDefined for declaration
             functionTable.insert(std::pair<string,Function>($2.name, newFunc));
         }
@@ -224,6 +228,8 @@ FUNC_DEC_API:
             newFunc.paramTypes = $4.paramTypes;
             newFunc.paramIds = $4.paramIds;
             newFunc.startLineImplementation = -1;
+            newFunc.indexNumVAParams = $4.paramTypes.size();
+            newFunc.startIndexVAParams = newFunc.indexNumVAParams + 1;
             newFunc.isDefined = false; // Mark as NOT isDefined for declaration
             functionTable.insert(std::pair<string,Function>($2.name, newFunc));
         }
@@ -307,6 +313,8 @@ FUNC_DEF_API:
         #if DEBUG_PARSER
         cerr << "--- FUNC_DEF_API Processing END for function: " << $2.name << " ---" << endl;
         #endif
+
+        ++currentScopeOffset;
     }
     | TYPE ID LPAREN FUNC_ARGLIST RPAREN
     {
@@ -338,6 +346,8 @@ FUNC_DEF_API:
             newFunc.startLineImplementation = buffer->nextQuad();
             functionTable.insert(std::pair<string,Function>($2.name, newFunc));
         }
+
+        ++currentScopeOffset;
     }
     | TYPE ID LPAREN FUNC_ARGLIST COMMA ELLIPSIS RPAREN
     {
@@ -373,6 +383,8 @@ FUNC_DEF_API:
         }
 
         buffer->emit("LOADI I3 I1 -8");
+
+        ++currentScopeOffset;
     }
 ;
 
@@ -471,22 +483,6 @@ DCL:
             symbolTable[$1.name].depth = currentScopeOffset;
         }
         current_symbols.push_back($1.name);
-
-        /*// Check redeclaration
-        if (symbolTable.find($1.name) != symbolTable.end() &&
-            symbolTable[$1.name].type.find(currentScopeOffset) != symbolTable[$1.name].type.end()) {
-            printSemanticError("redefinition of variable '" + $1.name + "'");
-        }*/
-
-        //// Update symbol table
-        //Symbol newSymbol;
-        //newSymbol.type[currentScopeOffset] = $3.type;
-        //newSymbol.offset[currentScopeOffset] = varOffset;
-        //newSymbol.depth = currentScopeOffset;
-        //symbolTable[$1.name] = newSymbol;
-
-        //// Update available offset for next variable.
-        //++currentScopeOffset;
     }
     | ID COMMA DCL
     {
@@ -1249,10 +1245,10 @@ CALL:
     
         // ALIGN STACK IF NEEDED (4-BYTE)
         int shiftSize = 0;
-        if (currentScopeOffset % 4 != 0) {
-            shiftSize = 4 - (currentScopeOffset % 4);
+        if (current_param_offset % 4 != 0) {
+            shiftSize = 4 - (current_param_offset % 4);
             buffer->emit("ADD2I I2 I2 " + to_string(shiftSize));
-            currentScopeOffset += shiftSize;
+            current_param_offset += shiftSize;
         }
 
         //SAVE ALL CALLER REGISTERS ON THE STACK
@@ -1279,7 +1275,7 @@ CALL:
         // ADJUST THE STACK POINTER (I2) FOR ALL THE SPACE WE RESERVED
         buffer->emit("ADD2I I2 I2 " + to_string(totalBytesPushed));
         buffer->emit("ADD2F F2 F2 " + to_string(totalBytesPushed));
-        currentScopeOffset += totalBytesPushed;
+        current_param_offset += totalBytesPushed;
 
         // SET THE FRAME POINTER (I1 = I2)
         buffer->emit("COPYI I1 I2");
