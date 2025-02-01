@@ -1,0 +1,25 @@
+float foo(a: int)
+{
+    x: float;
+    x = 43.16;
+    return x + (float)a;
+}
+
+int bar(x: float)
+{
+    a: int;
+    a = 57005;
+    return (int)x + a;
+}
+
+void main()
+{
+    a: int;
+    x: float;
+    read(a);
+    read(x);
+    write(foo(x));
+    write("\n");
+    write(bar(a));
+    write("\n");
+}

@@ -1,0 +1,8 @@
+void var(n: float, ...)
+{
+}
+
+void main()
+{
+    var(1.5, 1, 2);
+}

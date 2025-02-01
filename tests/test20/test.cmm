@@ -1,0 +1,9 @@
+int test()
+{
+}
+
+void main()
+{
+    write(test());
+    write("\n");
+}

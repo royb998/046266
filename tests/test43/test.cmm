@@ -1,0 +1,22 @@
+int test (a :int) {
+    b: int;
+    b = 5;
+    if a == 1 then {
+        b = b + 1;
+        write(b);
+    } else {
+        b :int;
+        b = 7;
+        write(b);
+    }
+    
+    return b;
+}
+
+void main() {
+    a, res :int;
+    read(a);
+    res = test(a);
+    write(res);
+    write("\n");
+}

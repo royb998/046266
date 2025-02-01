@@ -1,0 +1,27 @@
+int test()
+{
+    if 3 >= 4 then
+        return 1;
+    if 3 == 4 then
+        return 2;
+    if 4 < 3 then
+        return 3;
+    if 3 <> 3 then
+        return 4;
+    if 4 <= 3 then
+        return 5;
+    if 3 > 4 then
+        return 6;
+
+    return 0;
+}
+
+void main()
+{
+    result: int;
+    result = test();
+    if 0 == result then
+        write("Yay!\n");
+    else
+        write("Zut.\n");
+}

@@ -1,0 +1,13 @@
+float test()
+{
+    a: int;
+    b: float;
+    a = 15;
+    b = 15.0;
+    return a + b;
+}
+
+void main()
+{
+    write(test());
+}

@@ -1,0 +1,22 @@
+int test(a: int)
+{
+    if a > 0 then
+        if a < 5 then
+            return 5;
+    else {
+        if a < 0 then
+            write("Zut.\n");
+            return 0;
+    }
+
+    return a;
+}
+
+void main()
+{
+    a, b: int;
+    read(a);
+    b = test(a);
+    write(b);
+    write("\n");
+}

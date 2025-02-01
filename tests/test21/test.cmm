@@ -1,0 +1,26 @@
+int test()
+{
+    tests: int;
+    if 3 < 4 then
+        tests = tests + 1;
+    if 3 == 3 then
+        tests = tests + 1;
+    if 4 > 3 then
+        tests = tests + 1;
+    if 3 <> 4 then
+        tests = tests + 1;
+    if 4 >= 3 then
+        tests = tests + 1;
+    if 3 <= 4 then
+        tests = tests + 1;
+
+    if tests <> 6 then
+        return 0;
+    return 1;
+}
+
+void main()
+{
+    write(test());
+    write("\n");
+}

@@ -11,17 +11,28 @@ do
     echo Testing $testname
 
     #echo building...
-    ./rx-cc tests/$testname/test.cmm
+    ./rx-cc $testdir/test.cmm
     if [ $? -ne 0  ]; then
-        echo failed to build $testname
+        if [ -a $testdir/semantic_error ]; then
+            echo Probably PASSED\; check build to ensure
+            echo
+            continue
+        fi
+        echo FAILED to build $testname
         echo
         continue
+    else
+        if [ -a $testdir/semantic_error ]; then
+            echo $testname FAILED! should not have built
+            echo
+            continue
+        fi
     fi
     mv test.rsk asm/$testname.rsk
 
-    if [[ -d "tests/$testname/includes" && -n "$( ls -A tests/$testname/includes )" ]]; then
+    if [[ -d "$testdir/includes" && -n "$( ls -A $testdir/includes )" ]]; then
         mkdir -p asm/inc_$testname
-        for filename in tests/$testname/includes/*.cmm; do
+        for filename in $testdir/includes/*.cmm; do
             export name=`basename $filename .cmm`
             ./rx-cc $filename
             mv $name.rsk asm/inc_$testname
@@ -29,7 +40,7 @@ do
     fi
 
     #echo linking...
-    if [[ -d "tests/$testname/includes" && -n "$( ls -A tests/$testname/includes )" ]]; then
+    if [[ -d "$testdir/includes" && -n "$( ls -A $testdir/includes )" ]]; then
         ./rx-linker asm/$testname.rsk asm/inc_$testname/*
     else
         ./rx-linker asm/$testname.rsk      
@@ -37,8 +48,8 @@ do
 
     #echo running...
     mv asm/$testname.e bin
-    touch tests/$testname/input.in tests/$testname/output.out
-    ./rx-vm-nprints bin/$testname.e < tests/$testname/input.in 1> outputs/$testname.out
+    touch $testdir/input.in $testdir/output.out
+    ./rx-vm-nprints bin/$testname.e < $testdir/input.in 1> outputs/$testname.out
     if [ $? -ne 0 ]; then
         echo Runtime error on $testname
         echo
@@ -46,11 +57,11 @@ do
     fi
 
     #echo comparing...
-    diff tests/$testname/output.out outputs/$testname.out 1>diffs/$testname.diff
+    diff $testdir/output.out outputs/$testname.out 1>diffs/$testname.diff
     if [ $? -ne 0 ]; then
-        echo $testname failed! Different outputs.
+        echo $testname FAILED! Different outputs.
     else
-        echo $testname succeeded!
+        echo $testname PASSED!
     fi
 
     echo

@@ -1,0 +1,19 @@
+int foo(a, b: int);
+
+void main()
+{
+    x, y: int;
+    read(x);
+    read(y);
+    write(foo(x, y));
+    write("\n");
+}
+
+int foo(x, y: int);
+
+int foo(r, q: int)
+{
+    return r + q;
+}
+
+int foo(blaa, blii: int);

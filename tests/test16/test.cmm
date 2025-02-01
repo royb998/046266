@@ -1,0 +1,7 @@
+void main()
+{
+    x: float;
+    x = 15;
+    write(x);
+    write("\n");
+}
