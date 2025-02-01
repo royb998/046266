@@ -1,0 +1,15 @@
+void test(x,y:int) {
+    if (x > y) then
+        write("X is greater");
+    else if (x == y) then
+        write("X is equal to Y");
+    else
+        write("Y is greater");
+}
+
+void main() {
+    x, y: int;
+    read(x);
+    read(y);
+    test(x,y);
+}

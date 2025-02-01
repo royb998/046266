@@ -1,0 +1,8 @@
+void test(){
+    write("The quick brown fox\n");
+    write("jumps over the lazy dog");
+}
+
+void main() {
+    test();
+}

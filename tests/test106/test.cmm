@@ -1,0 +1,16 @@
+int test(n: int) {
+    sum: int;
+    sum = 0;
+    while (n > 0) do {
+        sum = sum + n;
+        n = n - 1;
+    }
+    return sum;
+}
+
+void main() {
+    num, result: int;
+    read(num);
+    result = test(num);
+    write(result);
+}

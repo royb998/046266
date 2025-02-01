@@ -1,8 +1,8 @@
-void test() {
+void test(n: int, ...) {
     x: float;
-    x = 5 / 0;
+    x = va_arg(float, 2);
 }
 
 void main() {
-    test();
+    test(1, 1.0);
 }

@@ -1,0 +1,13 @@
+int test(a: int) { # Factorial calculation
+    if(a == 1) then
+	return a;
+    return a*test(a-1);
+}
+
+void main() {
+    x, y, result: int;
+    read(x);
+    result= test(x);
+    write("Result:\n");
+    write(result);
+}

@@ -1,0 +1,17 @@
+int test (a :int) {
+	
+	if a == 1 then
+		return 1;
+	else
+		return a * test(a-1);
+	
+}
+
+
+
+void main() {
+	a, res :int;
+	read(a);
+	res = test(a);
+	write(res);
+}

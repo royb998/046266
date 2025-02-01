@@ -1,0 +1,30 @@
+int test (a,b,c:int) {
+	
+	if a > b - c then 
+		write("a is bigger than b - c\n");
+	else
+		write("b - c is bigger or equal than a\n");
+		
+	
+	if a > b && a > c then
+		write ("omg a is so big\n");
+	else 
+		write ("a is a looser\n");
+	
+	
+	if b == c then
+		return b;
+	else 
+		return a + b + 1;
+	
+}
+
+
+void main() {
+	a,b,c,res:int;
+	read(a);
+	read(b);
+	read(c);
+	res = test(a,b,c);
+	write(res);
+}

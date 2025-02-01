@@ -1,0 +1,13 @@
+int test(a, b, c: int) {
+    return a * b + c - (a + b);
+}
+
+void main() {
+    x, y, z, result: int;
+    read(x);
+    read(y);
+    read(z);
+    result = test(x, y, z);
+    write("Result:\n");
+    write(result);
+}

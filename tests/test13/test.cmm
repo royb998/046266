@@ -1,0 +1,22 @@
+void foo()
+{
+    a: int;
+    a = 5;
+    {
+        a: float;
+        a = 4.3;
+        write(a);
+    }
+    write(a);
+}
+
+float bar()
+{
+    a: float;
+    return a;
+}
+
+void main()
+{
+    foo();
+}

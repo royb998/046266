@@ -1,0 +1,4 @@
+float bar(x: float)
+{
+    return x;
+}

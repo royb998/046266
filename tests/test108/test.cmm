@@ -1,0 +1,26 @@
+int test(count: int, ...) { # Summing all numbers
+    i, curr, result: int;
+    result = 0;
+    i = count - 1;
+    
+    while i >= 0 do {
+	curr = va_arg(int, i);
+        result = result + curr;
+        i = i-1;
+    }
+
+    return result; 
+
+}
+
+void main() {
+    x, y, z, a, b, result: int;
+    read(x);
+    read(y);
+    read(z);
+    read(a);
+    read(b);
+    result = test(5, x, y, z, a, b);
+    write("Result:\n");
+    write(result);
+}

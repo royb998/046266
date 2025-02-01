@@ -1,0 +1,9 @@
+int foo();
+float bar(x: float);
+
+void main()
+{
+    write(bar(13.0));
+    write(foo());
+    write(bar(4.7));
+}

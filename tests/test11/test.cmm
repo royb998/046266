@@ -1,0 +1,22 @@
+int foo()
+{
+    a: int;
+    a = 16;
+    return 13;
+}
+
+int test()
+{
+    b: float;
+    b = 12.34;
+    return foo();
+}
+
+void main()
+{
+    a: int;
+    b: float;
+    b = 5.0;
+    a = test();
+    write(a);
+}

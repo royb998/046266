@@ -1,0 +1,13 @@
+float test(a, b, c: float) {
+    return (a / b) - c + (a * c);
+}
+
+void main() {
+    x, y, z, result: float;
+    read(x);
+    read(y);
+    read(z);
+    result = test(x, y, z);
+    write("Result:\n");
+    write(result);
+}

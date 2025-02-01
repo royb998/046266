@@ -1,0 +1,21 @@
+
+void test (a,b : int) {
+	c : int;
+	c = 5;
+	if a > 0 then
+		a = b + 1;
+	else
+		a = b + c;
+		
+	c : int;
+	c = 0;
+	a = b + c;
+}
+
+
+void main() {
+	a,b : int;
+	read(a);
+	read(b);
+	test(a,b);
+}

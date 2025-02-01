@@ -1,0 +1,15 @@
+
+float test (a,n : int, ...) {
+	c : float;
+	c = va_arg(float, a) * va_arg(float, n-1);
+	return c + 3.1;
+}
+
+
+void main() {
+	a : int;
+	res : float;
+	read(a);
+	res = test(a, 2, 2.0, 6.5);
+	write(res);
+}

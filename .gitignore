@@ -7,6 +7,9 @@
 # Running/debugging
 outputs/
 examples/
+asm/
+bin/
+diffs/
 
 # Artifacts
 rx-cc
