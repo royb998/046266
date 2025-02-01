@@ -141,7 +141,7 @@ FUNC_DEC_API:
     TYPE ID LPAREN RPAREN SEMICOLON
     {
         #if DEBUG_PARSER
-        cerr << "FUNC_DEF_API: TYPE ID LPAREN RPAREN SEMICOLON" << endl;
+        cerr << "FUNC_DEC_API: TYPE ID LPAREN RPAREN SEMICOLON" << endl;
         #endif
         $$.name = $2.name;
         $$.type = $1.type;
@@ -168,7 +168,7 @@ FUNC_DEC_API:
     | TYPE ID LPAREN FUNC_ARGLIST RPAREN SEMICOLON
     {
         #if DEBUG_PARSER
-        cerr << "FUNC_DEF_API: TYPE ID LPAREN M FUNC_ARGLIST RPAREN SEMICOLON" << endl;
+        cerr << "FUNC_DEC_API: TYPE ID LPAREN M FUNC_ARGLIST RPAREN SEMICOLON" << endl;
         for (size_t i = 0; i < $4.paramTypes.size(); ++i) {
             cerr << "    Arg " << i << ": " << $4.paramIds[i] << " (type " << $4.paramTypes[i] << ")" << endl;
         }
@@ -202,7 +202,7 @@ FUNC_DEC_API:
     | TYPE ID LPAREN FUNC_ARGLIST COMMA ELLIPSIS RPAREN SEMICOLON
     {
         #if DEBUG_PARSER
-        cerr << "TYPE ID LPAREN FUNC_ARGLIST COMMA ELLIPSIS RPAREN SEMICOLON" << endl;
+        cerr << "FUNC_DEC_API: TYPE ID LPAREN FUNC_ARGLIST COMMA ELLIPSIS RPAREN SEMICOLON" << endl;
         #endif
         $$.name = $2.name;
         $$.type = $1.type;
@@ -401,16 +401,12 @@ FUNC_ARGLIST:
         }
         #endif
         $$.paramTypes = $1.paramTypes;
-        //$$.paramTypes.push_back($3.type);
         $$.paramIds = $1.paramIds;
-        //$$.paramIds.push_back($3.name);
         $$.quad = buffer->nextQuad();
 
         // Finish defining params.
-        //for (auto symbol_name : current_symbols)
-        for (auto iter = current_symbols.rbegin(); iter != current_symbols.rend(); ++iter)
+        for (auto symbol_name : current_symbols)
         {
-            string& symbol_name = *iter;
             $$.paramTypes.push_back($1.type);
             $$.paramIds.push_back(symbol_name);
             // Offset of the new variable from the frame base.
@@ -586,27 +582,18 @@ STMT:
         #if DEBUG_PARSER
         cerr << "STMT: ASSN_STMT" << endl;
         #endif
-        //$$.quad = $1.quad;
-        //$$.type = $1.type;
-        //$$.nextList = $1.nextList;
     }
     | EXP SEMICOLON
     {
         #if DEBUG_PARSER
         cerr << "STMT: EXP SEMICOLON" << endl;
         #endif
-        //$$.quad = $1.quad;
-        //$$.type = $1.type;
-        //$1.name = $$.name; //needed for VA_MATERIALISE
-        //$$.nextList.clear();
     }
     | CNTRL_STMT M
     {
         #if DEBUG_PARSER
         cerr << "STMT: CNTRL_STMT" << endl;
         #endif
-        //$$.quad = $1.quad;
-        //$$.nextList = $1.nextList;
         buffer->backpatch($1.nextList, $2.quad);
     }
     | READ_STMT
@@ -614,48 +601,24 @@ STMT:
         #if DEBUG_PARSER
         cerr << "STMT: READ_STMT" << endl;
         #endif
-        //$$.quad = $1.quad;
-        //$$.nextList.clear();
     }
     | WRITE_STMT
     {
         #if DEBUG_PARSER
         cerr << "STMT: WRITE_STMT" << endl;
         #endif
-        //$$.quad = $1.quad;
-        //$$.nextList.clear();
     }
     | RETURN_STMT
     {
         #if DEBUG_PARSER
         cerr << "STMT: RETURN_STMT" << endl;
         #endif
-        /*$$.quad = $1.quad;
-        //$$.nextList.clear();
-
-        if (!functionTable.empty()) {
-            string currentFunc = "";
-            for (auto& pair : functionTable) {
-                if (pair.second.startLineImplementation != -1) {
-                    currentFunc = pair.first;
-                    break;
-                }
-            }
-
-            if (!currentFunc.empty()) {
-                if ($1.type != functionTable[currentFunc].returnType) {
-                    printSemanticError("return type mismatch in function '" + currentFunc + "'");
-                }
-            }
-        }*/
     }
     | BLK
     {
         #if DEBUG_PARSER
         cerr << "STMT: BLK" << endl;
         #endif
-        //$$.quad = $1.quad;
-        //$$.nextList = $1.nextList;
     }
 ;
 
@@ -680,7 +643,6 @@ RETURN_STMT:
         #if DEBUG_PARSER
         cerr << "RETURN_STMT: RETURN SEMICOLON" << endl;
         #endif
-        //$$.quad = buffer->nextQuad();
         $$.type = void_t;
         buffer->emit(string("RETRN"));
     }
@@ -1450,7 +1412,6 @@ CALL_ARGLIST:
         #if DEBUG_PARSER
         cerr << "CALL_ARGS: EXP" << endl;
         #endif
-        //$$.quad = buffer->nextQuad();
         $$.paramTypes.push_back($1.type);
         $$.paramRegs.push_back($1.RegNum);
     }
@@ -1459,9 +1420,6 @@ CALL_ARGLIST:
 M :
     /* EPSILON */
     {
-        //#if DEBUG_PARSER
-        //buffer->emit(";; M -> epsilon ;;");
-        //#endif
         $$.quad = buffer->nextQuad();
     }
 ;
