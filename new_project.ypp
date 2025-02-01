@@ -314,7 +314,6 @@ FUNC_DEF_API:
         cerr << "--- FUNC_DEF_API Processing END for function: " << $2.name << " ---" << endl;
         #endif
 
-        ++currentScopeOffset;
     }
     | TYPE ID LPAREN FUNC_ARGLIST RPAREN
     {
@@ -347,7 +346,6 @@ FUNC_DEF_API:
             functionTable.insert(std::pair<string,Function>($2.name, newFunc));
         }
 
-        ++currentScopeOffset;
     }
     | TYPE ID LPAREN FUNC_ARGLIST COMMA ELLIPSIS RPAREN
     {
@@ -384,7 +382,6 @@ FUNC_DEF_API:
 
         buffer->emit("LOADI I3 I1 -8");
 
-        ++currentScopeOffset;
     }
 ;
 
@@ -437,7 +434,7 @@ FUNC_ARGLIST:
 ;
 
 BLK:
-    LBRACE STLIST M RBRACE
+    OPEN_SCOPE LBRACE STLIST M RBRACE CLOSE_SCOPE
     {
         #if DEBUG_PARSER
         cerr << "BLK: LBRACE STLIST M RBRACE" << endl; // Add debug print here
@@ -451,6 +448,40 @@ BLK:
         //buffer->emit(string("RETRN")); // Moved RETRN emission to the end of BLK rule
     }
 ;
+
+OPEN_SCOPE:
+    /* EPSILON */
+    {
+        ++currentScopeOffset;
+        #if DEBUG_PARSER
+        cerr << "Open scope " << currentScopeOffset << endl;
+        #endif
+    }
+;
+
+CLOSE_SCOPE:
+    /* EPSILON */
+    {
+        #if DEBUG_PARSER
+        cerr << "Close scope " << currentScopeOffset << endl;
+        #endif
+        for (auto& symbol : symbolTable)
+        {
+            symbol.second.type.erase(currentScopeOffset);
+            symbol.second.offset.erase(currentScopeOffset);
+            size_t new_depth = 0;
+            for (auto& offset : symbol.second.offset)
+            {
+                if (offset.first > new_depth)
+                {
+                    new_depth = offset.first;
+                }
+            }
+            symbol.second.depth = new_depth;
+        }
+
+        --currentScopeOffset;
+    }
 
 DCL:
     ID COLON TYPE
