@@ -111,10 +111,6 @@ FDEFS:
         #if DEBUG_PARSER
         cerr << "FDEFS: FDEFS FUNC_DEF_API BLK" << endl;
         #endif
-        // Backpatch function calls
-        /*for(auto& func : functionTable) {
-            buffer->backpatch(func.second.callingLines, func.second.startLineImplementation);
-        }*/
 
         buffer->backpatch($3.nextList, buffer->nextQuad());
         // Emit RETRN at the end of the function
@@ -125,6 +121,8 @@ FDEFS:
         currentScopeOffset = 0;
         current_variable_offset = 0;
         current_param_offset = -8;
+        inVariadicFunction = false;
+
         symbolTable.clear();
         $2.paramTypes.clear();
     }
@@ -164,6 +162,8 @@ FUNC_DEC_API:
             newFunc.isDefined = false; // Mark as NOT isDefined for declaration
             functionTable.insert(std::pair<string,Function>($2.name, newFunc));
         }
+        symbolTable.clear();
+        current_param_offset = -8;
     }
     | TYPE ID LPAREN FUNC_ARGLIST RPAREN SEMICOLON
     {
@@ -199,21 +199,8 @@ FUNC_DEC_API:
             functionTable.insert(std::pair<string,Function>($2.name, newFunc));
         }
 
-        for (string symbol_name : $$.paramIds)
-        {
-            Symbol& symbol = symbolTable[symbol_name];
-            symbol.type.erase(currentScopeOffset);
-            symbol.offset.erase(currentScopeOffset);
-            size_t new_depth = 0;
-            for (auto& offset : symbol.offset)
-            {
-                if (offset.first > new_depth)
-                {
-                    new_depth = offset.first;
-                }
-            }
-            symbol.depth = new_depth;
-        }
+        symbolTable.clear();
+        current_param_offset = -8;
     }
     | TYPE ID LPAREN FUNC_ARGLIST COMMA ELLIPSIS RPAREN SEMICOLON
     {
@@ -251,21 +238,8 @@ FUNC_DEC_API:
             functionTable.insert(std::pair<string,Function>($2.name, newFunc));
         }
 
-        for (string symbol_name : $$.paramIds)
-        {
-            Symbol& symbol = symbolTable[symbol_name];
-            symbol.type.erase(currentScopeOffset);
-            symbol.offset.erase(currentScopeOffset);
-            size_t new_depth = 0;
-            for (auto& offset : symbol.offset)
-            {
-                if (offset.first > new_depth)
-                {
-                    new_depth = offset.first;
-                }
-            }
-            symbol.depth = new_depth;
-        }
+        symbolTable.clear();
+        current_param_offset = -8;
     }
 ;
 
@@ -297,6 +271,9 @@ FUNC_DEF_API:
             cerr << "existingFunc.defined: " << existingFunc.isDefined << endl; // DEBUG: defined flag value
             #endif
 
+            if (existingFunc.returnType != $1.type) {
+                printSemanticError("conflicting return type for function declaration '" + $2.name + "'");
+            }
             if (existingFunc.isDefined == true) {
                 #if DEBUG_PARSER
                 cerr << "*** Redefinition check triggered! ***" << endl;
@@ -360,6 +337,9 @@ FUNC_DEF_API:
 
         if (functionTable.find($2.name) != functionTable.end()) {
             Function& existingFunc = functionTable[$2.name];
+            if (existingFunc.returnType != $1.type) {
+                printSemanticError("conflicting return type for function declaration '" + $2.name + "'");
+            }
             if (existingFunc.isDefined == true) {
                 printSemanticError("3 redefinition of function '" + $2.name + "'");
             } else {
@@ -389,7 +369,6 @@ FUNC_DEF_API:
         $$.paramIds = $4.paramIds;
         $$.quad = buffer->nextQuad();
 
-
         if ($4.paramTypes.empty() || $4.paramTypes.front() != int_)
         {
             printSemanticError("missing or non-int last named parameter before '...'");
@@ -397,6 +376,9 @@ FUNC_DEF_API:
 
         if (functionTable.find($2.name) != functionTable.end()) {
             Function& existingFunc = functionTable[$2.name];
+            if (existingFunc.returnType != $1.type) {
+                printSemanticError("conflicting return type for function declaration '" + $2.name + "'");
+            }
              if (existingFunc.isDefined) {
                 printSemanticError("4 redefinition of function '" + $2.name + "'");
             } else {
@@ -417,10 +399,17 @@ FUNC_DEF_API:
             functionTable.insert(std::pair<string,Function>($2.name, newFunc));
         }
 
-        int num_va_params_index = $4.paramTypes.size();
-        int offset = 8 + (4 * (num_va_params_index - 1));
+        int num_va_params_index = $4.paramTypes.size() - 1;
+        int num_va_params_offset = -8 - (4 * num_va_params_index);
+        if (3 != currentScopeRegsNum)
+        {
+            printOperationalError("Something went wrong. VA num reg should be 3.");
+        }
         ++currentScopeRegsNum;
-        buffer->emit("LOADI I3 I" + to_string(num_va_params_index) + " -" + to_string(offset));
+
+        buffer->emit("COPYI I3 " + to_string(num_va_params_offset));
+
+        inVariadicFunction = true;
     }
 ;
 
@@ -1033,33 +1022,8 @@ EXP:
         // Handle type conversions
         int reg1 = $1.RegNum;
         int reg2 = $3.RegNum;
-
-/*        if ($$.type == float_) {
-            if ($1.type == int_) {
-                int tempReg = currentScopeRegsNum++;
-                buffer->emit(string("CITOF F") + to_string(tempReg) + string(" I") + to_string($1.RegNum));
-                reg1 = tempReg;
-            }
-            if ($3.type == int_) {
-                int tempReg = currentScopeRegsNum++;
-                buffer->emit(string("CITOF F") + to_string(tempReg) + string(" I") + to_string($3.RegNum));
-                reg2 = tempReg;
-            }
-        } else {
-            if ($1.type == float_) {
-                int tempReg = currentScopeRegsNum++;
-                buffer->emit(string("CFTOI I") + to_string(tempReg) + string(" F") + to_string($1.RegNum));
-                reg1 = tempReg;
-            }
-            if ($3.type == float_) {
-                int tempReg = currentScopeRegsNum++;
-                buffer->emit(string("CFTOI I") + to_string(tempReg) + string(" F") + to_string($3.RegNum));
-                reg2 = tempReg;
-            }
-        }*/
-
-        buffer->emit(opName + regType + " " + regType + to_string($$.RegNum) +  
-            " " + regType + to_string(reg1) +                           
+        buffer->emit(opName + regType + " " + regType + to_string($$.RegNum) +
+            " " + regType + to_string(reg1) +
             " " + regType + to_string(reg2));
     }
     | EXP MULOP EXP
@@ -1085,33 +1049,6 @@ EXP:
         // Handle type conversions
         int reg1 = $1.RegNum;
         int reg2 = $3.RegNum;
-
-/*        if ($$.type == float_) {
-            // Convert left operand to float if needed
-            if ($1.type == int_) {
-                int tempReg = currentScopeRegsNum++;
-                buffer->emit(string("CITOF F") + to_string(tempReg) + string("I") + to_string($1.RegNum));
-                reg1 = tempReg;
-            }
-            // Convert right operand to float if needed
-            if ($3.type == int_) {
-                int tempReg = currentScopeRegsNum++;
-                buffer->emit(string("CITOF F") + to_string(tempReg) + string(" I") + to_string($3.RegNum));
-                reg2 = tempReg;
-            }
-        } else {
-            if ($1.type == float_) {
-                int tempReg = currentScopeRegsNum++;
-                buffer->emit(string("CFTOI I") + to_string(tempReg) + string(" F") + to_string($1.RegNum));
-                reg1 = tempReg;
-            }
-            if ($3.type == float_) {
-                int tempReg = currentScopeRegsNum++;
-                buffer->emit(string("CFTOI I") + to_string(tempReg) + string(" F") + to_string($3.RegNum));
-                reg2 = tempReg;
-            }
-        }*/
-
         buffer->emit(opName + regType + " " + regType + to_string($$.RegNum) +
             " " + regType + to_string(reg1) +
             " " + regType + to_string(reg2));
@@ -1304,7 +1241,6 @@ CALL:
         // SET THE FRAME POINTER (I1 = I2)
         buffer->emit("COPYI I1 I2");
         buffer->emit("CITOF F1 I1");
-    
 
         for (size_t i = 0; i < callArgTypes.size(); i++) {
             int finalReg = callArgRegs[i];
@@ -1377,38 +1313,51 @@ VA_MATERIALISE:
         $$.RegNum = currentScopeRegsNum++;
         std::vector<int> runtime_errors;
 
+        if (!inVariadicFunction)
+        {
+            printSemanticError("va_arg found in non-variadic function");
+        }
+
+        // Get n (offset to n was saved in I3 in function definition).
+        int num_va_params_reg = currentScopeRegsNum++;
+        buffer->emit("LOADI I" + to_string(num_va_params_reg) + " I1 I3");
+
         // Runtime check: 0 <= index < n
         int tempReg1 = currentScopeRegsNum++;
         int tempReg2 = currentScopeRegsNum++;
 
-        // Check index >= 0
+        // Check (index >= 0)
         buffer->emit("SLETI I" + to_string(tempReg1) + " I" + to_string($5.RegNum) + " 0");
         runtime_errors.push_back(buffer->nextQuad());
         buffer->emit("BNEQZ I" + to_string(tempReg1) + " "); // Jump if index < 0
 
-
+        // Check (index < n)
         buffer->emit("SLETI I" + to_string(tempReg2)
-             + " I" + to_string($5.RegNum)
-             + " I3");
+                        + " I" + to_string($5.RegNum)
+                        + " I" + to_string(num_va_params_reg));
         runtime_errors.push_back(buffer->nextQuad());
-        buffer->emit("BREQZ I" + to_string(tempReg2) + " "); // Jump if i >= n
+        buffer->emit("BREQZ I" + to_string(tempReg2) + " "); // Jump if index >= n
 
-        // Calculate final offset: -8 - (index + 1) * 4
-        int offsetReg = currentScopeRegsNum++;
-        buffer->emit("ADD2I I" + to_string(offsetReg) + " I" + to_string($5.RegNum) + " 1"); // index + 1
-        buffer->emit("MULTI I" + to_string(offsetReg) + " I" + to_string(offsetReg) + " 4"); // * 4
-        buffer->emit("SUBTI I" + to_string(offsetReg) + " 0 I" + to_string(offsetReg)); // negate
-        buffer->emit("SUBTI I" + to_string(offsetReg) + " I" + to_string(offsetReg) + " 8"); // subtract 8
+        int temp_reg_3 = currentScopeRegsNum++;
+        int va_param_offset = currentScopeRegsNum++;
+        // Get index of argument, turn it into offset.
+        buffer->emit("ADD2I I" + to_string(temp_reg_3) + " I" + to_string($5.RegNum) + " 1");
+        buffer->emit("MULTI I" + to_string(temp_reg_3) + " I" + to_string(temp_reg_3) + " 4");
+        buffer->emit("SUBTI I" + to_string(va_param_offset) + " I3 I" + to_string(temp_reg_3));
 
-        // Load the value using the calculated offset
-        
-        if ($3.type == int_) {
-            buffer->emit("LOADI I" + to_string($$.RegNum) + " I1 I" + to_string(offsetReg));
-        } else if ($3.type == float_) {
-            int float_dest_reg = currentScopeRegsNum++;
+        if (int_ == $3.type)
+        {
+            buffer->emit("LOADI I" + to_string($$.RegNum) + " I1 I" + to_string(va_param_offset));
+        }
+        else if (float_ == $3.type)
+        {
             buffer->emit("CITOF F1 I1");
-            buffer->emit("CITOF F" + to_string(float_dest_reg) + " I" + to_string(offsetReg));
-            buffer->emit("LOADF F" + to_string($$.RegNum) + " F1" + " F" +to_string(float_dest_reg));
+            buffer->emit("CITOF F" + to_string(va_param_offset) + " I" + to_string(va_param_offset));
+            buffer->emit("LOADF F" + to_string($$.RegNum) + " F1 F" + to_string(va_param_offset));
+        }
+        else
+        {
+            printSemanticError("Invalid type for variadic argument");
         }
 
         // Error handling block
