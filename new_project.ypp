@@ -43,7 +43,6 @@ int currentScopeOffset = 0;
 Type currentReturnType;
 bool inVariadicFunction = false;
 bool isVariadicArgument = false;
-bool missing_return = true;
 
 int current_variable_offset = 0;
 int current_param_offset = -8;
@@ -113,26 +112,15 @@ FDEFS:
         cerr << "FDEFS: FDEFS FUNC_DEF_API BLK" << endl;
         #endif
 
-        if (missing_return)
-        {
-            if ($2.type == void_t)
-            {
-                buffer->backpatch($3.nextList, buffer->nextQuad());
-                // Emit RETRN at the end of the function
-                buffer->emit("RETRN");
-            }
-            else
-            {
-                printSemanticError("Semantic error: missing return statement for function '" + $1.name + "'");
-            }
-        }
+        buffer->backpatch($3.nextList, buffer->nextQuad());
+        // Emit RETRN at the end of the function
+        buffer->emit("RETRN");
 
         // Initialize the relevant globals
         currentScopeRegsNum = 3;
         currentScopeOffset = 0;
         current_variable_offset = 0;
         current_param_offset = -8;
-        missing_return = true;
         inVariadicFunction = false;
 
         symbolTable.clear();
@@ -334,8 +322,6 @@ FUNC_DEF_API:
         #if DEBUG_PARSER
         cerr << "--- FUNC_DEF_API Processing END for function: " << $2.name << " ---" << endl;
         #endif
-
-        missing_return = true;
     }
     | TYPE ID LPAREN FUNC_ARGLIST RPAREN
     {
@@ -370,8 +356,6 @@ FUNC_DEF_API:
             newFunc.startLineImplementation = buffer->nextQuad();
             functionTable.insert(std::pair<string,Function>($2.name, newFunc));
         }
-
-        missing_return = true;
     }
     | TYPE ID LPAREN FUNC_ARGLIST COMMA ELLIPSIS RPAREN
     {
@@ -425,7 +409,6 @@ FUNC_DEF_API:
         buffer->emit("COPYI I3 " + to_string(num_va_params_offset));
 
         inVariadicFunction = true;
-        missing_return = true;
     }
 ;
 
@@ -531,6 +514,11 @@ DCL:
         $$.name = $1.name;
         $$.type = $3.type;
         $$.quad = buffer->nextQuad();
+
+        if ($3.type == void_t)
+        {
+            printSemanticError("void is not a valid type for variable declaration");
+        }
 
         if (symbolTable.find($1.name) == symbolTable.end())
         {
@@ -707,7 +695,6 @@ RETURN_STMT:
             buffer->emit(string("STORI I" + to_string($2.RegNum) + " I1 -4"));  // Copy result to I0
         }
         buffer->emit("RETRN");
-        missing_return = false;
     }
     | RETURN SEMICOLON
     {
@@ -716,7 +703,6 @@ RETURN_STMT:
         #endif
         $$.type = void_t;
         buffer->emit("RETRN");
-        missing_return = false;
     }
 ;
 
@@ -966,7 +952,7 @@ BEXP:
         else if ($2.name == "<>")  opName = "SNEQ";
         else if ($2.name == "<=" || $2.name == ">")  opName = "SGRT"; 
         else if ($2.name == ">=" || $2.name == "<")  opName = "SLET"; 
-        else printOperationalError("Invalid relative operator.");
+        else printSemanticError("Invalid relative operator.");
 
 
         // Emit the compare instruction: we want I$.RegNum no matter float or int

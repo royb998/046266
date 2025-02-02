@@ -1,0 +1,20 @@
+int foo(n: int, ...)
+{
+    sum: int;
+    sum = 0;
+    i: int;
+    i = 0;
+    while i < n do {
+        sum = sum + va_arg(int, i);
+        i = i + 1;
+    }
+    return sum;
+}
+
+void main()
+{
+    a: int;
+    a = foo(3, 12, 16, 43);
+    write(a);
+    write("\n");
+}

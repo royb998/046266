@@ -4,6 +4,7 @@ int test()
 
 void main()
 {
-    write(test());
-    write("\n");
+    a: int;
+    a = test();
+    write("Undefined behaviour\n");
 }

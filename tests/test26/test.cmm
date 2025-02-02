@@ -1,0 +1,10 @@
+void main()
+{
+    write(foo());
+    write("\n");
+}
+
+int foo()
+{
+    return 5;
+}
