@@ -42,17 +42,10 @@ int currentScopeRegsNum = 3;
 int currentScopeOffset = 0;
 Type currentReturnType;
 bool inVariadicFunction = false;
-bool isVariadicArgument = false;
-
 int current_variable_offset = 0;
 int current_param_offset = -8;
 vector<string> current_symbols;
-
 %}
-
-/*%union {
-    yystype yystype;  // Use the struct isDefined in part3_helpers.hpp
-}*/
 
 /* Keywords and operators */
 %token  INT FLOAT VOID
@@ -78,166 +71,158 @@ vector<string> current_symbols;
 %left RBRACE
 %left COLON
 %left SEMICOLON
-
-/* Non-terminal types
-%type  PROGRAM FDEFS FUNC_DEC_API FUNC_DEF_API FUNC_ARGLIST
-%type  DCL STLIST STMT ASSN_STMT LVAL CNTRL_STMT
-%type  BEXP EXP CALL CALL_ARGS CALL_ARGLIST
-%type  NUM VA_MATERIALISE BLK RETURN_STMT WRITE_STMT READ_STMT TYPE
-%type  M N
-%start PROGRAM*/
-
 %%
 
 PROGRAM:
     FDEFS
-    {
-        #if DEBUG_PARSER
-        cerr << "PROGRAM: Finished parsing FDEFS." << endl;
-        #endif
-        // Backpatch function calls
+    { 
+        // Backpatch function calls. This ensures that forward-declared functions have their
+        // addresses properly resolved in jump instructions
         for(auto& func : functionTable) {
             buffer->backpatch(func.second.callingLines, func.second.startLineImplementation);
         }
-
-        /*// Add HALT AFTER all functions
-        buffer->emit("HALT");*/
     }
 ;
 
 FDEFS:
     FDEFS FUNC_DEF_API BLK
     {
-        #if DEBUG_PARSER
-        cerr << "FDEFS: FDEFS FUNC_DEF_API BLK" << endl;
-        #endif
-
         buffer->backpatch($3.nextList, buffer->nextQuad());
-        // Emit RETRN at the end of the function
+        // Emit a return instruction at the end of each function
         buffer->emit("RETRN");
 
-        // Initialize the relevant globals
+        // Reset state for the next function definition
         currentScopeRegsNum = 3;
         currentScopeOffset = 0;
         current_variable_offset = 0;
         current_param_offset = -8;
         inVariadicFunction = false;
 
+        // Clear the symbol table for the next function, as local symbols are no longer in scope
         symbolTable.clear();
         $2.paramTypes.clear();
     }
-    | FDEFS FUNC_DEC_API
-    {
-        #if DEBUG_PARSER
-        cerr << "FDEFS: FDEFS FUNC_DEC_API" << endl;
-        #endif
-    }
+    | FDEFS FUNC_DEC_API { }
     | /* empty */ { }
 ;
 
 FUNC_DEC_API:
     TYPE ID LPAREN RPAREN SEMICOLON
     {
-        #if DEBUG_PARSER
-        cerr << "FUNC_DEC_API: TYPE ID LPAREN RPAREN SEMICOLON" << endl;
-        #endif
+        // Store information about the declared function
         $$.name = $2.name;
         $$.type = $1.type;
-        $$.quad = buffer->nextQuad(); // TODO: Is this correct?
+        $$.quad = buffer->nextQuad();
 
+        // Check for conflicts with existing function declarations
         if (functionTable.find($2.name) != functionTable.end()) {
             Function& existingFunc = functionTable[$2.name];
+            // Ensure return type matches previous declarations
             if (existingFunc.returnType != $1.type) {
-                printSemanticError("conflicting return type for function declaration '" + $2.name + "'");
+                printSemanticError("conflicting return type for function declaration '" +
+                                   $2.name + "'");
             }
+            // Ensure parameter types match previous declarations
             if (!existingFunc.paramTypes.empty()) {
-                printSemanticError("conflicting parameter types for function declaration '" + $2.name + "'");
+                printSemanticError("conflicting parameter types for function declaration '" +
+                                    $2.name + "'");
             }
         } else {
+            // Create a new function entry in the table
             Function newFunc;
             newFunc.returnType = $1.type;
-            newFunc.startLineImplementation = -1;
+            newFunc.startLineImplementation = -1; // Indicate that the function is declared but not defined yet
             newFunc.indexNumVAParams = -1;
             newFunc.startIndexVAParams = -1;
-            newFunc.isDefined = false; // Mark as NOT isDefined for declaration
+            newFunc.isDefined = false;
             functionTable.insert(std::pair<string,Function>($2.name, newFunc));
         }
+        // Clear the symbol table as we exit the function declaration scope
         symbolTable.clear();
         current_param_offset = -8;
     }
     | TYPE ID LPAREN FUNC_ARGLIST RPAREN SEMICOLON
     {
-        #if DEBUG_PARSER
-        cerr << "FUNC_DEC_API: TYPE ID LPAREN M FUNC_ARGLIST RPAREN SEMICOLON" << endl;
-        for (size_t i = 0; i < $4.paramTypes.size(); ++i) {
-            cerr << "    Arg " << i << ": " << $4.paramIds[i] << " (type " << $4.paramTypes[i] << ")" << endl;
-        }
-        #endif
+        // Store information about the declared function
         $$.name = $2.name;
         $$.type = $1.type;
         $$.paramTypes = $4.paramTypes;
         $$.paramIds = $4.paramIds;
         $$.quad = buffer->nextQuad();
 
+        // Check for conflicts with existing function declarations
         if (functionTable.find($2.name) != functionTable.end()) {
             Function& existingFunc = functionTable[$2.name];
+            // Ensure return type matches previous declarations
             if (existingFunc.returnType != $1.type) {
-                printSemanticError("conflicting return type for function declaration '" + $2.name + "'");
+                printSemanticError("conflicting return type for function declaration '" + 
+                                    $2.name + "'");
             }
+            // Ensure parameter types match previous declarations
             if (existingFunc.paramTypes != $4.paramTypes) {
-                printSemanticError("conflicting parameter types for function declaration '" + $2.name + "'");
+                printSemanticError("conflicting parameter types for function declaration '" +
+                                   $2.name + "'");
             }
         } else {
+            // Create a new function entry in the table
             Function newFunc;
             newFunc.returnType = $1.type;
             newFunc.paramTypes = $4.paramTypes;
             newFunc.paramIds = $4.paramIds;
-            newFunc.startLineImplementation = -1;
+            newFunc.startLineImplementation = -1; // Indicate that the function is declared but not defined yet
             newFunc.indexNumVAParams = -1;
             newFunc.startIndexVAParams = -1;
-            newFunc.isDefined = false; // Mark as NOT isDefined for declaration
+            newFunc.isDefined = false;
             functionTable.insert(std::pair<string,Function>($2.name, newFunc));
         }
 
+        // Clear the symbol table as we exit the function declaration scope
         symbolTable.clear();
         current_param_offset = -8;
     }
     | TYPE ID LPAREN FUNC_ARGLIST COMMA ELLIPSIS RPAREN SEMICOLON
     {
-        #if DEBUG_PARSER
-        cerr << "FUNC_DEC_API: TYPE ID LPAREN FUNC_ARGLIST COMMA ELLIPSIS RPAREN SEMICOLON" << endl;
-        #endif
+        // Store information about the declared variadic function
         $$.name = $2.name;
         $$.type = $1.type;
         $$.paramTypes = $4.paramTypes;
         $$.paramIds = $4.paramIds;
         $$.quad = buffer->nextQuad();
 
-        if ($4.paramTypes.empty() || $4.paramTypes.front() != int_)
-        {
+        // Ensure there's at least one named parameter before the ellipsis, and it's an int
+        if ($4.paramTypes.empty() || $4.paramTypes.front() != int_) {
             printSemanticError("missing or non-int last named parameter before '...'");
         }
 
+        // Check for conflicts with existing function declarations
         if (functionTable.find($2.name) != functionTable.end()) {
             Function& existingFunc = functionTable[$2.name];
+            // Ensure return type matches previous declarations
             if (existingFunc.returnType != $1.type) {
-                printSemanticError("conflicting return type for variadic function declaration '" + $2.name + "'");
+                printSemanticError("conflicting return type for variadic function declaration '" +
+                                    $2.name + "'");
             }
+            // Ensure parameter types match previous declarations
             if (existingFunc.paramTypes != $4.paramTypes) {
-                printSemanticError("conflicting parameter types for variadic function declaration '" + $2.name + "'");
+                printSemanticError("conflicting parameter types for variadic function declaration '" 
+                                    + $2.name + "'");
             }
         } else {
+            // Create a new function entry in the table for the variadic function
             Function newFunc;
             newFunc.returnType = $1.type;
             newFunc.paramTypes = $4.paramTypes;
             newFunc.paramIds = $4.paramIds;
-            newFunc.startLineImplementation = -1;
+            newFunc.startLineImplementation = -1; // Indicate that the function is declared but not defined yet
+            
+            // Store indices for managing variadic arguments
             newFunc.indexNumVAParams = $4.paramTypes.size();
             newFunc.startIndexVAParams = newFunc.indexNumVAParams + 1;
-            newFunc.isDefined = false; // Mark as NOT isDefined for declaration
+            newFunc.isDefined = false;
             functionTable.insert(std::pair<string,Function>($2.name, newFunc));
         }
 
+        // Clear the symbol table as we exit the function declaration scope
         symbolTable.clear();
         current_param_offset = -8;
     }
@@ -246,106 +231,79 @@ FUNC_DEC_API:
 FUNC_DEF_API:
     TYPE ID LPAREN RPAREN
     {
-        #if DEBUG_PARSER
-        cerr << "FUNC_DEF_API: TYPE ID LPAREN RPAREN" << endl;
-        #endif
+        // Store information about the defined function
         $$.name = $2.name;
         $$.type = $1.type;
         $$.quad = buffer->nextQuad();
-        /*
-        cerr << "--- FUNC_DEF_API Processing for function: " << $2.name << " ---" << endl;
-        cerr << "Before functionTable.find('" << $2.name << "')" << endl;
-        cerr << "functionTable.size(): " << functionTable.size() << endl; // DEBUG: Table size
-        //cerr << "definedFunctions.size(): " << definedFunctions.size() << endl; // DEBUG: Set size
-        */
+
+        // Special case: 'main' must return 'void'
         if ($2.name == "main" && $1.type != void_t) {
             printSemanticError("main function must return void");
         }
 
+        // Check for conflicts with existing function declarations or definitions
         if (functionTable.find($2.name) != functionTable.end()) {
             Function& existingFunc = functionTable[$2.name];
-            #if DEBUG_PARSER
-            cerr << "Function '" << $2.name << "' FOUND in functionTable." << endl;
-            cerr << "existingFunc.startLineImplementation: " << existingFunc.startLineImplementation << endl;
-            cerr << "existingFunc.defined: " << existingFunc.isDefined << endl; // DEBUG: defined flag value
-            #endif
 
+            // Ensure return type matches previous declarations
             if (existingFunc.returnType != $1.type) {
                 printSemanticError("conflicting return type for function declaration '" + $2.name + "'");
             }
+            // Check for redefinition
             if (existingFunc.isDefined == true) {
-                #if DEBUG_PARSER
-                cerr << "*** Redefinition check triggered! ***" << endl;
-                #endif
                 printSemanticError("2 redefinition of function '" + $2.name + "'");
             } else {
-                #if DEBUG_PARSER
-                cerr << "Function was declared, now defining." << endl;
-                #endif
+                // Mark the function as defined and record the start line of the implementation
                 existingFunc.startLineImplementation = buffer->nextQuad();
                 existingFunc.isDefined = true;
-                // Initialize parameter offsets
-                current_param_offset = -8;
-                for (size_t i = 0; i < $4.paramIds.size(); i++) {
-                    symbolTable[$4.paramIds[i]].offset[currentScopeOffset] = current_param_offset;
-                    current_param_offset -= 4;
-                }
             }
         } else {
-            #if DEBUG_PARSER
-            cerr << "Function '" << $2.name << "' NOT found in functionTable. Creating new entry." << endl;
-            #endif
+            // Create a new function entry in the table
             Function newFunc;
             newFunc.returnType = $1.type;
             newFunc.paramTypes = $4.paramTypes;
             newFunc.paramIds = $4.paramIds;
             newFunc.startLineImplementation = $$.quad;
-            newFunc.isDefined = true; // Mark as isDefined when first isDefined!
+            newFunc.isDefined = true; 
             newFunc.indexNumVAParams = -1;
             newFunc.startIndexVAParams = -1;
             functionTable.insert(std::pair<string,Function>($2.name, newFunc));
-            // Initialize parameter offsets
-            current_param_offset = -8;
-            for (size_t i = 0; i < $4.paramIds.size(); i++) {
-                symbolTable[$4.paramIds[i]].offset[currentScopeOffset] = current_param_offset;
-                current_param_offset -= 4;
-            }
-            #if DEBUG_PARSER
-            cerr << "functionTable.size() AFTER insert: " << functionTable.size() << endl; // DEBUG: Table size after insert
-            //cerr << "definedFunctions.size() AFTER insert: " << definedFunctions.size() << endl; // DEBUG: Set size after insert
 
-            cerr << "New function '" << $2.name << "' added to functionTable." << endl;
-            cerr << "newFunc.startLineImplementation set to: " << newFunc.startLineImplementation << endl;
-            cerr << "functionTable['" << $2.name << "'].startLineImplementation: " << functionTable[$2.name].startLineImplementation << endl;
-            #endif
         }
-        #if DEBUG_PARSER
-        cerr << "--- FUNC_DEF_API Processing END for function: " << $2.name << " ---" << endl;
-        #endif
+        
+        // Initialize parameter offsets
+        current_param_offset = -8;
+        for (size_t i = 0; i < $4.paramIds.size(); i++) {
+            symbolTable[$4.paramIds[i]].offset[currentScopeOffset] = current_param_offset;
+            current_param_offset -= 4;
+        }
     }
     | TYPE ID LPAREN FUNC_ARGLIST RPAREN
     {
-        #if DEBUG_PARSER
-        cerr << "FUNC_DEF_API: TYPE ID LPAREN FUNC_ARGLIST RPAREN" << endl;
-        #endif
+        // Store information about the defined function
         $$.name = $2.name;
         $$.type = $1.type;
         $$.paramTypes = $4.paramTypes;
         $$.paramIds = $4.paramIds;
         $$.quad = buffer->nextQuad();
 
+        // Check for conflicts with existing function declarations or definitions
         if (functionTable.find($2.name) != functionTable.end()) {
             Function& existingFunc = functionTable[$2.name];
+            // Ensure return type matches previous declarations
             if (existingFunc.returnType != $1.type) {
                 printSemanticError("conflicting return type for function declaration '" + $2.name + "'");
             }
+            // Check for redefinition
             if (existingFunc.isDefined == true) {
                 printSemanticError("3 redefinition of function '" + $2.name + "'");
             } else {
+                // Mark the function as defined and record the start line of the implementation
                 existingFunc.startLineImplementation = buffer->nextQuad();
                 existingFunc.isDefined = true;
             }
         } else {
+            // Create a new function entry in the table
             Function newFunc;
             newFunc.isDefined = true;
             newFunc.returnType = $1.type;
@@ -359,55 +317,58 @@ FUNC_DEF_API:
     }
     | TYPE ID LPAREN FUNC_ARGLIST COMMA ELLIPSIS RPAREN
     {
-        #if DEBUG_PARSER
-        cerr << "FUNC_DEF_API: TYPE ID LPAREN FUNC_ARGLIST COMMA ELLIPSIS RPAREN" << endl;
-        #endif
+        // Store information about the defined variadic function
         $$.name = $2.name;
         $$.type = $1.type;
         $$.paramTypes = $4.paramTypes;
         $$.paramIds = $4.paramIds;
         $$.quad = buffer->nextQuad();
 
-        if ($4.paramTypes.empty() || $4.paramTypes.front() != int_)
-        {
+        // Ensure there's at least one named parameter before the ellipsis, and it's an int
+        if ($4.paramTypes.empty() || $4.paramTypes.front() != int_) {
             printSemanticError("missing or non-int last named parameter before '...'");
         }
 
+        // Check for conflicts with existing function declarations or definitions
         if (functionTable.find($2.name) != functionTable.end()) {
             Function& existingFunc = functionTable[$2.name];
+            // Ensure return type matches previous declarations
             if (existingFunc.returnType != $1.type) {
                 printSemanticError("conflicting return type for function declaration '" + $2.name + "'");
             }
+            // Check for redefinition
              if (existingFunc.isDefined) {
                 printSemanticError("4 redefinition of function '" + $2.name + "'");
             } else {
+                // Mark the function as defined and record the start line of the implementation
                 existingFunc.startLineImplementation = buffer->nextQuad();
                 existingFunc.isDefined = true;
             }
         } else {
+            // Create a new function entry in the table for the variadic function
             Function newFunc;
             inVariadicFunction = true;
-            isVariadicArgument = true;
             newFunc.isDefined = true;
             newFunc.returnType = $1.type;
             newFunc.paramTypes = $4.paramTypes;
             newFunc.paramIds = $4.paramIds;
+            
+            // Store indices for managing variadic arguments
             newFunc.indexNumVAParams = $4.paramTypes.size();
             newFunc.startIndexVAParams = newFunc.indexNumVAParams + 1;
             newFunc.startLineImplementation = buffer->nextQuad();
             functionTable.insert(std::pair<string,Function>($2.name, newFunc));
         }
 
+        // Special handling for variadic functions: store the number of variadic arguments in I3
         int num_va_params_index = $4.paramTypes.size() - 1;
         int num_va_params_offset = -8 - (4 * num_va_params_index);
-        if (3 != currentScopeRegsNum)
-        {
+        if (3 != currentScopeRegsNum) {
             printOperationalError("Something went wrong. VA num reg should be 3.");
         }
-        ++currentScopeRegsNum;
-
+        ++currentScopeRegsNum; // Use the next available register
+        // Store the offset to the number of variadic arguments in I3
         buffer->emit("COPYI I3 " + to_string(num_va_params_offset));
-
         inVariadicFunction = true;
     }
 ;
@@ -415,57 +376,46 @@ FUNC_DEF_API:
 FUNC_ARGLIST:
     FUNC_ARGLIST COMMA DCL
     {
-        #if DEBUG_PARSER
-        cerr << "FUNC_ARGLIST: FUNC_ARGLIST COMMA DCL" << endl;
-        #endif
-        #if DEBUG_PARSER
-        cerr << "FUNC_ARGLIST: Processed argument list." << endl;
-        for (size_t i = 0; i < $$.paramTypes.size(); ++i) {
-            cerr << "    Arg " << i << ": " << $$.paramIds[i] << " (type " << $$.paramTypes[i] << ")" << endl;
-        }
-        #endif
+        // Inherit parameter types and IDs from the previous part of the argument list
         $$.paramTypes = $1.paramTypes;
         $$.paramIds = $1.paramIds;
         $$.quad = buffer->nextQuad();
 
-        // Finish defining params.
-        for (auto symbol_name : current_symbols)
-        {
+        // Process the newly declared parameters
+        for (auto symbol_name : current_symbols) {
+            // Add the type and ID of each parameter to the lists
             $$.paramTypes.push_back($1.type);
             $$.paramIds.push_back(symbol_name);
-            // Offset of the new variable from the frame base.
+            
+            // Calculate and store the offset of the new parameter from the frame base
             symbolTable[symbol_name].offset[currentScopeOffset] = current_param_offset;
-            current_param_offset -= 4;
+            current_param_offset -= 4; // Decrement the offset for the next parameter (stack grows downwards)
         }
-        current_symbols.clear();
+        current_symbols.clear(); // Clear the list of currently processed symbols
     }
     | DCL
     {
-        #if DEBUG_PARSER
-        cerr << "FUNC_ARGLIST: DCL" << endl; // Add debug print here
-        #endif
         $$.quad = buffer->nextQuad();
 
-        // Finish defining params.
-        for (auto iter = current_symbols.rbegin(); iter != current_symbols.rend(); ++iter)
-        {
+        // Process the newly declared parameters (base case for the argument list)
+        for (auto iter = current_symbols.rbegin(); iter != current_symbols.rend(); ++iter) {
             string& symbol_name = *iter;
+            // Add the type and ID of each parameter to the lists
             $$.paramTypes.push_back($1.type);
             $$.paramIds.push_back(symbol_name);
-            // Offset of the new variable from the frame base.
+            
+            // Calculate and store the offset of the new parameter from the frame base
             symbolTable[symbol_name].offset[currentScopeOffset] = current_param_offset;
-            current_param_offset -= 4;
+            current_param_offset -= 4; // Decrement the offset for the next parameter (stack grows downwards)
         }
-        current_symbols.clear();
+        current_symbols.clear(); // Clear the list of currently processed symbols
     }
 ;
 
 BLK:
     OPEN_SCOPE LBRACE STLIST M RBRACE CLOSE_SCOPE
     {
-        #if DEBUG_PARSER
-        cerr << "BLK: LBRACE STLIST M RBRACE" << endl; // Add debug print here
-        #endif
+        // Propagate the quad and next list information from the block's statement list
         $$.quad = $2.quad;
         buffer->backpatch($2.nextList, $3.quad);
     }
@@ -474,23 +424,19 @@ BLK:
 OPEN_SCOPE:
     /* EPSILON */
     {
+        // Increment the scope level when entering a new block
         ++currentScopeOffset;
-        #if DEBUG_PARSER
-        cerr << "Open scope " << currentScopeOffset << endl;
-        #endif
     }
 ;
 
 CLOSE_SCOPE:
     /* EPSILON */
     {
-        #if DEBUG_PARSER
-        cerr << "Close scope " << currentScopeOffset << endl;
-        #endif
-        for (auto& symbol : symbolTable)
-        {
+        // Remove symbols from the current scope when exiting a block
+        for (auto& symbol : symbolTable) {
             symbol.second.type.erase(currentScopeOffset);
             symbol.second.offset.erase(currentScopeOffset);
+            // Update the symbol's depth to the maximum scope level it was defined in
             size_t new_depth = 0;
             for (auto& offset : symbol.second.offset)
             {
@@ -502,67 +448,64 @@ CLOSE_SCOPE:
             symbol.second.depth = new_depth;
         }
 
+        // Decrement the scope level
         --currentScopeOffset;
     }
 
 DCL:
     ID COLON TYPE
     {
-        #if DEBUG_PARSER
-        cerr << "DCL: ID COLON TYPE" << endl;
-        #endif
+        // Store information about the declared variable
         $$.name = $1.name;
         $$.type = $3.type;
         $$.quad = buffer->nextQuad();
 
-        if ($3.type == void_t)
-        {
+        // 'void' type is not allowed for variable declarations
+        if ($3.type == void_t) {
             printSemanticError("void is not a valid type for variable declaration");
         }
 
-        if (symbolTable.find($1.name) == symbolTable.end())
-        {
+        // Check for redefinition within the current scope
+        if (symbolTable.find($1.name) == symbolTable.end()) {
+            // Create a new symbol entry if it doesn't exist
             Symbol new_symbol;
             new_symbol.type[currentScopeOffset] = $3.type;
             new_symbol.depth = currentScopeOffset;
             symbolTable[$1.name] = new_symbol;
         }
-        else if (symbolTable[$1.name].type.find(currentScopeOffset) != symbolTable[$1.name].type.end())
-        {
+        else if (symbolTable[$1.name].type.find(currentScopeOffset) != symbolTable[$1.name].type.end()) {
             printSemanticError("redefinition of variable '" + $1.name + "'");
-        }
-        else
-        {
+        } else {
+            // Add the type information for the current scope level
             symbolTable[$1.name].type[currentScopeOffset] = $3.type;
             symbolTable[$1.name].depth = currentScopeOffset;
         }
+        // Add the symbol to the list of currently processed symbols
         current_symbols.push_back($1.name);
     }
     | ID COMMA DCL
     {
-        #if DEBUG_PARSER
-        cerr << "ID COMMA DCL" << endl;
-        #endif
+        // Store information about the declared variable
         $$.name = $1.name;
         $$.type = $3.type;
         $$.quad = buffer->nextQuad();
 
-        if (symbolTable.find($1.name) == symbolTable.end())
-        {
+        // Check for redefinition within the current scope
+        if (symbolTable.find($1.name) == symbolTable.end()) {
+            // Create a new symbol entry if it doesn't exist
             Symbol new_symbol;
             new_symbol.type[currentScopeOffset] = $3.type;
             new_symbol.depth = currentScopeOffset;
             symbolTable[$1.name] = new_symbol;
-        }
-        else if (symbolTable[$1.name].type.find(currentScopeOffset) != symbolTable[$1.name].type.end())
+        } else if (symbolTable[$1.name].type.find(currentScopeOffset) != symbolTable[$1.name].type.end())
         {
             printSemanticError("redefinition of variable '" + $1.name + "'");
-        }
-        else
-        {
+        } else {
+            // Add the type information for the current scope level
             symbolTable[$1.name].type[currentScopeOffset] = $3.type;
             symbolTable[$1.name].depth = currentScopeOffset;
         }
+        // Add the symbol to the list of currently processed symbols
         current_symbols.push_back($1.name);
     }
 ;
@@ -570,47 +513,28 @@ DCL:
 TYPE:
     INT
     {
-        #if DEBUG_PARSER
-        cerr << "TYPE: INT" << endl;
-        #endif
+        // Set the type to 'int'
         $$.type = int_;
         $$.quad = buffer->nextQuad();
     }
     | FLOAT
     {
-        #if DEBUG_PARSER
-        cerr << "TYPE: FLOAT" << endl;
-        #endif
+        // Set the type to 'float'
         $$.type = float_;
         $$.quad = buffer->nextQuad();
     }
     | VOID
     {
-        #if DEBUG_PARSER
-        cerr << "TYPE: VOID" << endl;
-        #endif
+        // Set the type to 'void'
         $$.type = void_t;
         $$.quad = buffer->nextQuad();
     }
 ;
 
 STLIST:
-    STLIST STMT
-    {
-        #if DEBUG_PARSER
-        cerr << "STLIST: STLIST STMT" << endl;
-        #endif
-        //$$.quad = $1.quad;
-        //buffer->backpatch($1.nextList, $2.nextList);
-        //$$.nextList = $2.nextList;
-        //$2.name = $$.name;
-    }
+    STLIST STMT { }
     | /* empty */
     {
-        #if DEBUG_PARSER
-        cerr << "STLIST: empty" << endl;
-        #endif
-        //$$.quad = buffer->nextQuad();
         $$.nextList.clear();
     }
 ;
@@ -618,89 +542,50 @@ STLIST:
 STMT:
     DCL SEMICOLON
     {
-        #if DEBUG_PARSER
-        cerr << "STMT: DCL SEMICOLON" << endl;
-        #endif
         $$.quad = $1.quad;
         $$.type = $1.type;
 
         // Finish defining new symbols.
-        for (auto symbol_name : current_symbols)
-        {
+        for (auto symbol_name : current_symbols) {
             // Allocate space on the stack for the variable.
             buffer->emit("ADD2I I2 I2 4");
+            
             // Offset of the new variable from the frame base.
             symbolTable[symbol_name].offset[currentScopeOffset] = current_variable_offset;
             current_variable_offset += 4;
         }
         current_symbols.clear();
     }
-    | ASSN_STMT
-    {
-        #if DEBUG_PARSER
-        cerr << "STMT: ASSN_STMT" << endl;
-        #endif
-    }
-    | EXP SEMICOLON
-    {
-        #if DEBUG_PARSER
-        cerr << "STMT: EXP SEMICOLON" << endl;
-        #endif
-    }
+    | ASSN_STMT { }
+    | EXP SEMICOLON { }
     | CNTRL_STMT M
     {
-        #if DEBUG_PARSER
-        cerr << "STMT: CNTRL_STMT" << endl;
-        #endif
+        // Backpatch the control statement's 'next list' to the next quad after the statement
         buffer->backpatch($1.nextList, $2.quad);
     }
-    | READ_STMT
-    {
-        #if DEBUG_PARSER
-        cerr << "STMT: READ_STMT" << endl;
-        #endif
-    }
-    | WRITE_STMT
-    {
-        #if DEBUG_PARSER
-        cerr << "STMT: WRITE_STMT" << endl;
-        #endif
-    }
-    | RETURN_STMT
-    {
-        #if DEBUG_PARSER
-        cerr << "STMT: RETURN_STMT" << endl;
-        #endif
-    }
-    | BLK
-    {
-        #if DEBUG_PARSER
-        cerr << "STMT: BLK" << endl;
-        #endif
-    }
+    | READ_STMT { }
+    | WRITE_STMT { }
+    | RETURN_STMT { }
+    | BLK { }
 ;
 
 RETURN_STMT:
     RETURN EXP SEMICOLON
     {
-        #if DEBUG_PARSER
-        cerr << "RETURN_STMT: RETURN EXP SEMICOLON" << endl;
-        #endif
         $$.quad = buffer->nextQuad();
-        $$.type = $2.type;  // Use $$ to set the type
+        $$.type = $2.type;  
 
+        // Store the return value in the designated return value location (offset -4 from the frame pointer)
         if ($2.type == float_) {
-            buffer->emit(string("STORF F" + to_string($2.RegNum) + " F1 -4"));  // Copy result to F0
+            buffer->emit(string("STORF F" + to_string($2.RegNum) + " F1 -4"));
         } else {
-            buffer->emit(string("STORI I" + to_string($2.RegNum) + " I1 -4"));  // Copy result to I0
+            buffer->emit(string("STORI I" + to_string($2.RegNum) + " I1 -4"));  
         }
         buffer->emit("RETRN");
     }
     | RETURN SEMICOLON
     {
-        #if DEBUG_PARSER
-        cerr << "RETURN_STMT: RETURN SEMICOLON" << endl;
-        #endif
+        // Set the type to 'void' for return statements without an expression
         $$.type = void_t;
         buffer->emit("RETRN");
     }
@@ -709,11 +594,9 @@ RETURN_STMT:
 WRITE_STMT:
     WRITE LPAREN EXP RPAREN SEMICOLON
     {
-        #if DEBUG_PARSER
-        cerr << "WRITE_STMT: WRITE LPAREN EXP RPAREN SEMICOLON" << endl;
-        #endif
         $$.quad = buffer->nextQuad();
 
+        // Emit code to print the expression based on its type
         if ($3.type == float_) {
             buffer->emit(string("PRNTF F") + to_string($3.RegNum));
         } else if ($3.type == int_) {
@@ -724,13 +607,11 @@ WRITE_STMT:
     }
     | WRITE LPAREN STRING_LITERAL RPAREN SEMICOLON
     {
-        #if DEBUG_PARSER
-        cerr << "WRITE_STMT: WRITE LPAREN STRING_LITERAL RPAREN SEMICOLON" << endl;
-        #endif
         $$.quad = buffer->nextQuad();
         string str = $3.name;
         str = str.substr(1, str.length() - 2); // Remove surrounding quotes
 
+        // Emit code to print each character of the string literal
         for (size_t i = 0; i < str.length(); i++) {
             if (str[i] == '\\') {
                 // Handle escape sequences
@@ -744,7 +625,7 @@ WRITE_STMT:
                     case '"':  // Handle escaped quotes
                         buffer->emit("PRNTC 34");
                         break;
-                    case 't': // tab
+                    case 't': // Tab
                         buffer->emit("PRNTC 9");
                         break;
                     default:   // Unknown escape
@@ -761,32 +642,24 @@ WRITE_STMT:
 READ_STMT:
     READ LPAREN LVAL RPAREN SEMICOLON
     {
-        #if DEBUG_PARSER
-        cerr << "READ_STMT: READ LPAREN LVAL RPAREN SEMICOLON" << endl;
-        #endif
-
-        // Get the symbol information for the variable being read
+        // Get the symbol corresponding to the lvalue
         Symbol& sym = symbolTable[$3.name];
         int offset = sym.offset[sym.depth];
-
-        // Allocate a temporary register for the read value
         int tempReg = currentScopeRegsNum++;
 
+        // Emit code to read input based on the lvalue's type
         if (sym.type[sym.depth] == float_) {
-            // Read a float value into a float register
             buffer->emit("READF F" + to_string(tempReg));
 
-            // Convert I1 (frame pointer) to a float register
+            // Convert I1 (frame pointer) to a float register for addressing
             int floatBaseReg = currentScopeRegsNum++;
             buffer->emit("CITOF F" + to_string(floatBaseReg) + " I1");
 
-            // Store the float value in memory
+            // Store the float value in memory at the calculated offset
             buffer->emit("STORF F" + to_string(tempReg) + " F" + to_string(floatBaseReg) + " " + to_string(offset));
         } else {
-            // Read an integer value into an integer register
             buffer->emit("READI I" + to_string(tempReg));
-
-            // Store the integer value in memory
+            // Store the integer value in memory at the calculated offset
             buffer->emit("STORI I" + to_string(tempReg) + " I1 " + to_string(offset));
         }
     }
@@ -795,30 +668,24 @@ READ_STMT:
 ASSN_STMT:
     LVAL ASSIGN EXP SEMICOLON
     {
-        #if DEBUG_PARSER
-        cerr << "ASSN_STMT: LVAL ASSIGN EXP SEMICOLON" << endl;
-        #endif
-        //$$.quad = buffer->nextQuad();
-
+        // Get the symbol corresponding to the lvalue
         Symbol& sym = symbolTable[$1.name];
         Type lvalType = sym.type[sym.depth];
         Type expType = $3.type;
 
-        // Check for void type errors
+        // Check for void type errors in assignment
         if (lvalType == void_t || expType == void_t) {
             printSemanticError("void type in assignment");
         }
 
-        // Check for implicit casting and report a semantic error
+        // Check for implicit casting and report a semantic error if types are incompatible
         if (lvalType != expType) {
             printSemanticError("incompatible type of argument '" + $1.name + "'");
         }
 
-
         // $$: 'LVAL' has a register pointing to that var's memory
         int dest_offset = sym.offset[sym.depth];
         int src_reg   = $3.RegNum;
-
 
         if (lvalType == float_) {
             // Convert I1 (base pointer) to a float register
@@ -839,38 +706,31 @@ ASSN_STMT:
 LVAL:
     ID
     {
-        #if DEBUG_PARSER
-        cerr << "LVAL: ID" << endl;
-        #endif
         $$.name = $1.name;
         $$.quad = buffer->nextQuad();
 
+        // Check if the variable is defined
         if (symbolTable.find($1.name) == symbolTable.end()) {
             printSemanticError("undefined variable '" + $1.name + "'");
         }
 
         Symbol& sym = symbolTable[$1.name];
 
+        // Check if the variable is defined in the current scope
         if (sym.type.find(sym.depth) == sym.type.end()) {
             printSemanticError("undefined variable '" + $1.name + "' at current scope");
         }
-        //$$.type = sym.type[sym.depth];
-        //$$.RegNum = currentScopeRegsNum++;
-        //buffer->emit("ADD2I I" + to_string($$.RegNum) + " I1 " +
-        //            to_string(sym.offset[sym.depth]));
     }
 ;
 
 CNTRL_STMT:
     IF BEXP THEN M STMT ELSE N M STMT
     {
-        #if DEBUG_PARSER
-        cerr << "CNTRL_STMT:  IF BEXP THEN M STMT N ELSE M STMT" << endl;
-        #endif
         $$.quad = buffer->nextQuad();
-
+        // Backpatch the true and false lists of the boolean expression to the appropriate jump targets
         buffer->backpatch($2.trueList, $4.quad);
         buffer->backpatch($2.falseList, $8.quad);
+        // Merge the 'next lists' of the two statements and the 'N' non-terminal into the control statement's 'next list'
 		$$.nextList = merge<int>($5.nextList, $7.nextList);
 		$$.nextList = merge<int>($$.nextList, $9.nextList);
 		$5.nextList.clear();
@@ -879,20 +739,23 @@ CNTRL_STMT:
     }
     | IF BEXP THEN M STMT
     {
-        #if DEBUG_PARSER
-        cerr << "CNTRL_STMT:  IF BEXP THEN M STMT" << endl;
-        #endif
+        // Backpatch the true list of the boolean expression to the statement's quad
         buffer->backpatch($2.trueList, $4.quad);
+        // Merge the false list of the boolean expression and the 'next list' of the statement into
+        // the control statement's 'next list'
 		$$.nextList = merge<int>($2.falseList, $5.nextList);
 		$2.falseList.clear();
 		$5.nextList.clear();
     }
     | WHILE M BEXP DO M STMT
     {
+        // Backpatch the true list of the boolean expression to the statement's quad
 		buffer->backpatch($3.trueList, $5.quad);
+        // Backpatch the 'next list' of the statement to the beginning of the loop (M's quad)
 		buffer->backpatch($6.nextList, $2.quad);
+        // The false list of the boolean expression becomes the 'next list' of the control statement
 		$$.nextList = $3.falseList;
-		// Emit to buffer UJUMP command. After backpatch the addressed would be filled
+        // Emit an unconditional jump to the beginning of the loop
 		buffer->emit("UJUMP " + intToString($2.quad));
 	}
 ;
@@ -900,103 +763,88 @@ CNTRL_STMT:
 BEXP:
     BEXP OR M BEXP
     {
-        #if DEBUG_PARSER
-        cerr << "BEXP: BEXP OR BEXP" << endl;
-        #endif
-        //$$.quad = buffer->nextQuad();
+        // Backpatch the false list of the left-hand side boolean expression to the quad of the marker 'M'
         buffer->backpatch($1.falseList, $3.quad);
+        // The false list of the overall expression is the false list of the right-hand side expression
 		$$.falseList = $4.falseList;
+        // Merge the true lists of both sides into the true list of the overall expression
 		$$.trueList = merge($1.trueList, $4.trueList);
 		$1.trueList.clear();
 		$4.trueList.clear();
     }
     | BEXP AND M BEXP
     {
-        #if DEBUG_PARSER
-        cerr << "BEXP: BEXP AND BEXP" << endl;
-        #endif
-        //$$.quad = buffer->nextQuad();
+        // Backpatch the true list of the left-hand side boolean expression to the quad of the marker 'M'
         buffer->backpatch($1.trueList, $3.quad);
+        // The true list of the overall expression is the true list of the right-hand side expression
 		$$.trueList = $4.trueList;
+        // Merge the false lists of both sides into the false list of the overall expression
 		$$.falseList = merge<int>($1.falseList, $4.falseList);
 		$1.falseList.clear();
 		$4.falseList.clear();
     }
     | NOT BEXP
     {
-        #if DEBUG_PARSER
-        cerr << "BEXP: NOT BEXP" << endl;
-        #endif
-        //$$.quad = buffer->nextQuad();
+        // The true list of the overall expression is the false list of the subexpression, and vice-versa
         $$.trueList = $2.falseList;
         $$.falseList = $2.trueList;
     }
     | EXP RELOP EXP
     {
-        #if DEBUG_PARSER
-        cerr << "BEXP: EXP RELOP EXP" << endl;
-        #endif
-        //$$.quad = buffer->nextQuad();
+        // Check for type mismatches in relational expressions
         if ($1.type != $3.type) {
             printSemanticError("type mismatch in relational expression");
-            //return 1;
         } else if ($1.type == void_t) {
 			printSemanticError("can't perform this operation on 'void' type arguments");
         }
 
-
         $$.RegNum = currentScopeRegsNum++;
         string opName;
 
+        // Determine the appropriate comparison instruction based on the operator
         if ($2.name == "==")       opName = "SEQU";
         else if ($2.name == "<>")  opName = "SNEQ";
         else if ($2.name == "<=" || $2.name == ">")  opName = "SGRT"; 
         else if ($2.name == ">=" || $2.name == "<")  opName = "SLET"; 
         else printSemanticError("Invalid relative operator.");
 
+        if ($1.type == float_) {
+            // Perform floating-point comparison
+            int cmpFloatReg = currentScopeRegsNum++;
+            buffer->emit(opName + "F F" + to_string(cmpFloatReg)
+                        + " F" + to_string($1.RegNum)
+                        + " F" + to_string($3.RegNum));
 
-        // Emit the compare instruction: we want I$.RegNum no matter float or int
-    //int cmpFloatReg = -1;
-    if ($1.type == float_) {
-        int cmpFloatReg = currentScopeRegsNum++;
-        // Compare floats => produce int in I$.RegNum
-        buffer->emit(opName + "F F" + to_string(cmpFloatReg)
-                     + " F" + to_string($1.RegNum)
-                     + " F" + to_string($3.RegNum));
-
-        buffer->emit("CFTOI I" + to_string($$.RegNum) +
-                     " F" + to_string(cmpFloatReg));
-    } else {
-        // Compare ints => produce int in I$.RegNum
-        buffer->emit(opName + "I I" + to_string($$.RegNum)
-                     + " I" + to_string($1.RegNum)
-                     + " I" + to_string($3.RegNum));
-    }
-
-    // Next line does the branch on that integer result
-    // If the op is "==", for instance, the result is 1 or 0 in I$.RegNum
-
-    $$.falseList.push_back(buffer->nextQuad());
-    if ($2.name == "<>" || $2.name == "==" ||
-        $2.name == "<"  || $2.name == ">")
-    {
-        // Branch if result==0
-        buffer->emit("BREQZ I" + to_string($$.RegNum) + " ");
-    }
-    else {
-        // Branch if result!=0
-        buffer->emit("BNEQZ I" + to_string($$.RegNum) + " ");
+            // Convert the comparison result to an integer
+            buffer->emit("CFTOI I" + to_string($$.RegNum) +
+                        " F" + to_string(cmpFloatReg));
+        } else {
+            // Perform integer comparison
+            buffer->emit(opName + "I I" + to_string($$.RegNum)
+                        + " I" + to_string($1.RegNum)
+                        + " I" + to_string($3.RegNum));
         }
 
+        // Prepare for conditional jump based on the comparison result
+        $$.falseList.push_back(buffer->nextQuad());
+        if ($2.name == "<>" || $2.name == "==" ||
+            $2.name == "<"  || $2.name == ">")
+        {
+            // Branch if result==0
+            buffer->emit("BREQZ I" + to_string($$.RegNum) + " ");
+        }
+        else {
+            // Branch if result!=0
+            buffer->emit("BNEQZ I" + to_string($$.RegNum) + " ");
+        }
+
+        // Prepare for unconditional jump after the conditional branch
         $$.trueList.push_back(buffer->nextQuad());
         buffer->emit("UJUMP ");
     }
     | LPAREN BEXP RPAREN
     {
-        #if DEBUG_PARSER
-        cerr << "BEXP: LPAREN BEXP RPAREN" << endl;
-        #endif
-        //$$.quad = $2.quad;
+        // Inherit the true and false lists from the parenthesized boolean expression
         $$.trueList = $2.trueList;
         $$.falseList = $2.falseList;
     }
@@ -1005,52 +853,51 @@ BEXP:
 EXP:
     EXP ADDOP EXP
     {
-        #if DEBUG_PARSER
-        cerr << "EXP: EXP ADDOP EXP" << endl;
-        #endif
         $$.quad = buffer->nextQuad();
 
+        // Check for void types in arithmetic expressions
         if ($1.type == void_t || $3.type == void_t) {
             printSemanticError("void type in arithmetic expression");
         }
-        if ($1.type != $3.type)
-        {
+        // Check for type mismatches in arithmetic expressions
+        if ($1.type != $3.type) {
             printSemanticError("mismatch in types between arithmetic operators");
         }
 
+        // Determine the register type and operation name based on the type and operator
         string regType = ($$.type == float_) ? "F" : "I"; 
         string opName = ($2.name == "+") ? "ADD2" : "SUBT"; 
         $$.type = $1.type;
         $$.RegNum = currentScopeRegsNum++;
 
-        // Handle type conversions
+        // Emit the arithmetic operation instruction
         int reg1 = $1.RegNum;
         int reg2 = $3.RegNum;
-        buffer->emit(opName + regType + " " + regType + to_string($$.RegNum) +
-            " " + regType + to_string(reg1) +
+        buffer->emit(opName + regType + " " + regType + to_string($$.RegNum) +  
+            " " + regType + to_string(reg1) +                           
             " " + regType + to_string(reg2));
     }
     | EXP MULOP EXP
     {
-        #if DEBUG_PARSER
-        cerr << "EXP: EXP MULOP EXP" << endl;
-        #endif
         $$.quad = buffer->nextQuad();
 
+        // Check for void types in arithmetic expressions
         if ($1.type == void_t || $3.type == void_t) {
             printSemanticError("void type in arithmetic expression");
         }
+        // Check for type mismatches in arithmetic expressions
         if ($1.type != $3.type)
         {
             printSemanticError("mismatch in types between arithmetic operators");
         }
 
+        // Determine the register type and operation name based on the type and operator
         string regType = ($$.type == float_) ? "F" : "I";
         string opName = ($2.name == "*") ? "MULT" : "DIVD";
         $$.type = ($1.type == float_ || $3.type == float_) ? float_ : int_;
         $$.RegNum = currentScopeRegsNum++;
 
-        // Handle type conversions
+        // Emit the arithmetic operation instruction
         int reg1 = $1.RegNum;
         int reg2 = $3.RegNum;
         buffer->emit(opName + regType + " " + regType + to_string($$.RegNum) +
@@ -1059,17 +906,12 @@ EXP:
     }
     | LPAREN EXP RPAREN
     {
-        #if DEBUG_PARSER
-        cerr << "EXP: LPAREN EXP RPAREN" << endl;
-        #endif
-        $$ = $2;  // Pass through all attributes
+        // Inherit the properties of the parenthesized expression
+        $$ = $2;
     }
     | LPAREN TYPE RPAREN EXP
     {
-        #if DEBUG_PARSER
-        cerr << "EXP: LPAREN TYPE RPAREN EXP" << endl;
-        #endif
-        //$$.quad = buffer->nextQuad();
+        // Check for invalid casting to/from void
         if ($2.type == void_t && $4.type != void_t) {  
             printSemanticError("can't cast a non-void expression to void");
         } else if ($2.type != void_t && $4.type == void_t) {
@@ -1078,30 +920,36 @@ EXP:
         $$.type = $2.type;
         $$.RegNum = currentScopeRegsNum++;
 
+        // Emit the appropriate type conversion instruction based on the source and target types
         if ($2.type == float_ && $4.type == int_) {
-            buffer->emit(string("CITOF F") + to_string($$.RegNum) + string(" I") + to_string($4.RegNum));
+            buffer->emit(string("CITOF F") + to_string($$.RegNum) + string(" I") +
+                                to_string($4.RegNum));
+
         } else if ($2.type == int_ && $4.type == float_) {
-            buffer->emit(string("CFTOI I") + to_string($$.RegNum) + string(" F") + to_string($4.RegNum));
+            buffer->emit(string("CFTOI I") + to_string($$.RegNum) + string(" F") + 
+                                to_string($4.RegNum));
+
         } else {
+            // If no conversion is needed, emit a copy instruction (if types are different) or do nothing (if types are the same)
             if ($2.type == float_) {
-                buffer->emit(string("COPYF F") + to_string($$.RegNum) + string(" F") + to_string($4.RegNum));
+                buffer->emit(string("COPYF F") + to_string($$.RegNum) + string(" F") +
+                                     to_string($4.RegNum));
+
             } else {
-                buffer->emit(string("COPYI I") + to_string($$.RegNum) + string(" I") + to_string($4.RegNum));
+                buffer->emit(string("COPYI I") + to_string($$.RegNum) + string(" I") + 
+                                     to_string($4.RegNum));
             }
         }
     }
     | ID
     {
-        #if DEBUG_PARSER
-        cerr << "EXP: ID" << endl;
-        #endif
-        //$$.quad = buffer->nextQuad();
-        
+        // Check if the identifier is defined
         if (symbolTable.find($1.name) == symbolTable.end()) {
             printSemanticError("unDefined variable '" + $1.name + "'");
         }
 
         Symbol& sym = symbolTable[$1.name];
+        // Check if the identifier is defined in the current scope
         if (sym.type.find(sym.depth) == sym.type.end()) {
             printSemanticError("unDefined variable '" + $1.name + "' at current scope");
         }
@@ -1110,10 +958,12 @@ EXP:
         $$.RegNum = currentScopeRegsNum++;
         $$.name = $1.name;
 
+        // Emit code to load the value of the identifier into a register
         if ($$.type == float_) {
             int floatBaseReg = currentScopeRegsNum++;
             buffer->emit("CITOF F" + to_string(floatBaseReg) + " I1");  // Convert I1 to F
-            buffer->emit("LOADF F" + to_string($$.RegNum) + " F" + to_string(floatBaseReg) + " " + to_string(sym.offset[sym.depth]));
+            buffer->emit("LOADF F" + to_string($$.RegNum) + " F" + to_string(floatBaseReg) + " " +
+                         to_string(sym.offset[sym.depth]));
         } else {
             buffer->emit(string("LOADI I") + 
                          to_string($$.RegNum) + string(" I1 ") +
@@ -1122,13 +972,12 @@ EXP:
     }       
     | NUM
     {
-        #if DEBUG_PARSER
-        cerr << "EXP: NUM" << endl;
-        #endif
+        // Set the type and value of the numeric literal
         $$.type = ($1.type == int_) ? int_ : float_; 
         $$.RegNum = currentScopeRegsNum++; 
         $$.name = $1.name; 
 
+        // Emit code to copy the numeric literal into a register
         if ($$.type == float_) {
             buffer->emit("COPYF F" + to_string($$.RegNum) + " " + $1.name);
         } else { 
@@ -1137,16 +986,12 @@ EXP:
     }
     | CALL
     {
-        #if DEBUG_PARSER
-        cerr << "EXP: CALL" << endl;
-        #endif
+        // Inherit the properties of the function call
         $$ = $1;
     }
     | VA_MATERIALISE
     {
-        #if DEBUG_PARSER
-        cerr << "EXP: VA_MATERIALISE" << endl;
-        #endif
+        // Inherit the properties of the va_arg expression
         $$ = $1;
     }
 ;
@@ -1154,24 +999,14 @@ EXP:
 NUM:
     INTEGERNUM
     {
-        #if DEBUG_PARSER
-        cerr << "NUM: INTEGERNUM" << endl;
-        #endif
+        // Set the type to 'int' for integer literals
         $$.type = int_;
-        //$$.RegNum = currentScopeRegsNum++;
-        //if (!isVariadicArgument) {
-        //    buffer->emit(string("COPYI I") + to_string($$.RegNum) + string(" ") + $1.name);
-        //}
         $$.quad = buffer->nextQuad();
     }
     | REALNUM
     {
-        #if DEBUG_PARSER
-        cerr << "NUM: REALNUM" << endl;
-        #endif
+        // Set the type to 'float' for real number literals
         $$.type = float_;
-        //$$.RegNum = currentScopeRegsNum++;
-        //buffer->emit(string("COPYF F") + to_string($$.RegNum) + string(" ") + $1.name);
         $$.quad = buffer->nextQuad();
     }
 ;
@@ -1179,36 +1014,33 @@ NUM:
 CALL:
     ID LPAREN CALL_ARGS RPAREN
     {
-        #if DEBUG_PARSER
-        cerr << "CALL: ID LPAREN CALL_ARGS RPAREN" << endl;
-        #endif
-
-        // 1) CHECK IF FUNCTION EXISTS
+        // --- Function Call Handling ---
+        
+        // Check if the function being called is defined
         if (functionTable.find($1.name) == functionTable.end()) {
             printSemanticError("Undefined function '" + $1.name + "'");
-            // NOTE: Must stop compilation or at least guard further usage
         }
         Function &func = functionTable[$1.name];
 
-        // 2) CHECK # OF ARGUMENTS MATCHES
-        if (func.indexNumVAParams == -1) { //not variadic func
+        // --- Argument Validation ---
+
+        // Check if the number of arguments matches the function definition (for non-variadic functions)
+        if (func.indexNumVAParams == -1) { // Check if it's not a variadic function
             if (func.paramTypes.size() != $3.paramTypes.size()) {
                 printSemanticError("incorrect number of arguments of function '" + $1.name + "'");
             }
-        }
-
+        } 
+        
+        // Check if the types of arguments match the function definition
         for (int i = 0; i < (int)func.paramTypes.size(); i++) {
             if (func.paramTypes[i] != $3.paramTypes[i]) {
                 printSemanticError("incompatible argument type for function '" + $1.name + "'");
             }
         }
     
-        // Set the flag for variadic arguments
-        if (func.indexNumVAParams != -1) { //need to check if needed
-            isVariadicArgument = true;
-        }
-    
-        // ALIGN STACK IF NEEDED (4-BYTE)
+        // --- Stack Management (Before Call) ---
+
+        // Align the stack if needed to ensure 4-byte alignment
         int shiftSize = 0;
         if (current_param_offset % 4 != 0) {
             shiftSize = 4 - (current_param_offset % 4);
@@ -1216,83 +1048,86 @@ CALL:
             current_param_offset += shiftSize;
         }
 
-        //SAVE ALL CALLER REGISTERS ON THE STACK
+        // Save all caller registers on the stack before the function call
         int totalBytesPushed = 0;
-        int floatBaseReg = currentScopeRegsNum++; // Temporary float base register
-        buffer->emit("CITOF F2 I2"); // Convert I2 to F2 for float operations
+        int floatBaseReg = currentScopeRegsNum++; // Temporary float base register for float operations
+        buffer->emit("CITOF F2 I2"); // Convert I2 (stack pointer) to F2 for float operations
         for (int regID = 0; regID < currentScopeRegsNum; regID++) {
-            // Save integer registers
             buffer->emit("STORI I" + to_string(regID) + " I2 " + to_string(totalBytesPushed));
-            // Save float registers
             buffer->emit("STORF F" + to_string(regID) + " F2 " + to_string(totalBytesPushed));
-            totalBytesPushed += 4; // Each register is 4 bytes
+            totalBytesPushed += 4; 
         }
         totalBytesPushed += 4; 
 
-        //STORE PARAMETERS ON THE STACK
+        // --- Parameter Passing ---
+
+        // Store parameters on the stack
         vector<Type> callArgTypes = $3.paramTypes; 
         vector<int>  callArgRegs  = $3.paramRegs;  
-        $3.paramRegs.clear();
-		$3.paramTypes.clear();
-        
-        isVariadicArgument = false;
+        $3.paramRegs.clear(); // Clear paramRegs after storing them
+		$3.paramTypes.clear(); // Clear paramTypes after storing them
 
-        // ADJUST THE STACK POINTER (I2) FOR ALL THE SPACE WE RESERVED
+        // Adjust the stack pointer (I2) to account for the space reserved for saved registers and parameters
         buffer->emit("ADD2I I2 I2 " + to_string(totalBytesPushed));
         buffer->emit("ADD2F F2 F2 " + to_string(totalBytesPushed));
         current_param_offset += totalBytesPushed;
 
-        // SET THE FRAME POINTER (I1 = I2)
+        // Set the frame pointer (I1) to the current stack pointer (I2)
         buffer->emit("COPYI I1 I2");
         buffer->emit("CITOF F1 I1");
+    
 
         for (size_t i = 0; i < callArgTypes.size(); i++) {
             int finalReg = callArgRegs[i];
             Type paramType = callArgTypes[i];
 
-            // Calculate the offset for the parameter
+            // Calculate the offset for each parameter on the stack
             int paramOffset = -8 - (i * 4);
 
             if (paramType == float_) {
-                // Store float parameters
                 buffer->emit("STORF F" + to_string(finalReg) + " F1 " + to_string(paramOffset));
             } else {
-                // Store integer parameters
                 buffer->emit("STORI I" + to_string(finalReg) + " I1 " + to_string(paramOffset));
             }
         }
 
-        // EMIT THE CALL (JLINK). We fill with backpatch 
+        // --- Function Call ---
+
+        // Store the calling line number for later backpatching in case the function is not yet defined
         functionTable[$1.name].callingLines.push_back(buffer->nextQuad());
         buffer->emit("JLINK ");
 
-        // ON RETURN: RESTORE THE STACK FRAME (I2 = I1)
+        // --- Stack Management (After Call) ---
+
+        // After the function call, restore the stack frame by setting the stack pointer (I2) to the frame pointer (I1)
         buffer->emit("COPYI I2 I1");
         buffer->emit("CITOF F2 I2");
 
-        // 8) LOAD THE RETURN VALUE (IF NOT void)
+        // --- Return Value Handling ---
+
+        // Load the return value from the stack if the function is not void
         $$.type = func.returnType;
         $$.RegNum = currentScopeRegsNum++;
         if ($$.type != void_t) {
             if ($$.type == float_) {
-                // Convert I1 to a float register for float return values
-                //int floatBaseReg = currentScopeRegsNum++;
-                //buffer->emit("CITOF F1 I1");
                 buffer->emit("LOADF F" + to_string($$.RegNum) + " F1 -4");
             } else {
-                // Load integer return value directly
                 buffer->emit("LOADI I" + to_string($$.RegNum) + " I1 -4");
             }
         }
 
-        // DEALLOCATE THE SPACE WE ADDED
+        // --- Stack Deallocation ---
+
+        // Deallocate the space added to the stack for saved registers and parameters
         buffer->emit("SUBTI I2 I2 " + to_string(totalBytesPushed));
         buffer->emit("SUBTF F2 F2 " + to_string(totalBytesPushed));
 
-        // RESTORE ALL CALLER REGISTERS
+        // --- Register Restoration ---
+        
+        // Restore all caller registers from the stack after the function call
         int restoreOffset = 0;
         for (int regID = 0; regID < currentScopeRegsNum; regID++) {
-            // skip I2
+            // Skip I2 (stack pointer) as it was already restored
             if (regID == 2) {
                 restoreOffset +=4;
                 continue;
@@ -1302,23 +1137,20 @@ CALL:
             buffer->emit("LOADF F" + to_string(regID) + " F2 " + to_string(restoreOffset));
             restoreOffset += 4;
         }
-        currentScopeRegsNum++;	
+        currentScopeRegsNum++;	// Increment the register counter after using registers in this scope
     }
 ;
 
 VA_MATERIALISE:
     VA_ARG LPAREN TYPE COMMA EXP RPAREN
     {
-        #if DEBUG_PARSER
-        cerr << "VA_MATERIALISE: VA_ARG LPAREN TYPE COMMA EXP RPAREN" << endl;
-        #endif
         $$.quad = buffer->nextQuad();
         $$.type = $3.type;
         $$.RegNum = currentScopeRegsNum++;
         std::vector<int> runtime_errors;
 
-        if (!inVariadicFunction)
-        {
+        // Check if va_arg is used within a variadic function
+        if (!inVariadicFunction) {
             printSemanticError("va_arg found in non-variadic function");
         }
 
@@ -1337,7 +1169,7 @@ VA_MATERIALISE:
 
         // Check (index < n)
         buffer->emit("SLETI I" + to_string(tempReg2)
-                        + " I" + to_string($5.RegNum)
+             + " I" + to_string($5.RegNum)
                         + " I" + to_string(num_va_params_reg));
         runtime_errors.push_back(buffer->nextQuad());
         buffer->emit("BREQZ I" + to_string(tempReg2) + " "); // Jump if index >= n
@@ -1349,22 +1181,18 @@ VA_MATERIALISE:
         buffer->emit("MULTI I" + to_string(temp_reg_3) + " I" + to_string(temp_reg_3) + " 4");
         buffer->emit("SUBTI I" + to_string(va_param_offset) + " I3 I" + to_string(temp_reg_3));
 
-        if (int_ == $3.type)
-        {
+        // Load the variadic argument based on its type
+        if (int_ == $3.type) {
             buffer->emit("LOADI I" + to_string($$.RegNum) + " I1 I" + to_string(va_param_offset));
-        }
-        else if (float_ == $3.type)
-        {
+        } else if (float_ == $3.type) {
             buffer->emit("CITOF F1 I1");
             buffer->emit("CITOF F" + to_string(va_param_offset) + " I" + to_string(va_param_offset));
             buffer->emit("LOADF F" + to_string($$.RegNum) + " F1 F" + to_string(va_param_offset));
-        }
-        else
-        {
+        } else {
             printSemanticError("Invalid type for variadic argument");
         }
 
-        // Error handling block
+        // Error handling block: print "Runtime error!" and halt
         int runtime_error_skip = buffer->nextQuad();
         buffer->emit("UJUMP ");
         int runtime_error_print = buffer->nextQuad();
@@ -1384,6 +1212,7 @@ VA_MATERIALISE:
         buffer->emit("PRNTC 33");   // !
         buffer->emit("PRNTC 10");   // \n
         buffer->emit("HALT");
+        // Backpatch jump instructions for runtime errors to the error handling block
         buffer->backpatch(runtime_errors, runtime_error_print);
         $$.nextList.push_back(runtime_error_skip); // Skip if nothing bad happened.
         buffer->backpatch($$.nextList, buffer->nextQuad());
@@ -1393,41 +1222,29 @@ VA_MATERIALISE:
 CALL_ARGS:
     CALL_ARGLIST
     {
-        #if DEBUG_PARSER
-        cerr << "CALL_ARGS: CALL_ARGLIST" << endl;
-        #endif
+        // Inherit parameter types and registers from the argument list
 		$$.paramTypes = $1.paramTypes;	
 		$$.paramRegs = $1.paramRegs;
 		$1.paramTypes.clear();
 		$1.paramRegs.clear();      
     }
-    | /* empty */
-    {
-        #if DEBUG_PARSER
-        cerr << "CALL_ARGS: empty" << endl;
-        #endif
-    }
+    | /* empty */ { }
 ;
 
 CALL_ARGLIST:
     CALL_ARGLIST COMMA EXP
     {
-        #if DEBUG_PARSER
-        cerr << "CALL_ARGS: CALL_ARGLIST COMMA EXP" << endl;
-        #endif
-        //$$.quad = buffer->nextQuad();
+        // Propagate parameter types and registers, and add the new expression's type and register
         $$.paramTypes = $1.paramTypes;
         $$.paramRegs = $1.paramRegs;
         $$.paramTypes.push_back($3.type);
         $$.paramRegs.push_back($3.RegNum);
         $1.paramTypes.clear();
-	$1.paramRegs.clear();
+	    $1.paramRegs.clear();
     }
     | EXP
     {
-        #if DEBUG_PARSER
-        cerr << "CALL_ARGS: EXP" << endl;
-        #endif
+        // Base case: add the expression's type and register to the lists
         $$.paramTypes.push_back($1.type);
         $$.paramRegs.push_back($1.RegNum);
     }
@@ -1436,14 +1253,15 @@ CALL_ARGLIST:
 M :
     /* EPSILON */
     {
+        // Set the quad to the next available quad, marking a location in the code
         $$.quad = buffer->nextQuad();
     }
 ;
 
-
 N :
     /* EPSILON */
     {
+        // Add the next quad to the 'next list' and emit an unconditional jump instruction (for later backpatching)
         $$.nextList.push_back(buffer->nextQuad());
         buffer->emit("UJUMP ");
     }
