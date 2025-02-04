@@ -2,6 +2,7 @@
 ._*
 *fier
 *bz2
+!proj-*.tar.bz2
 *.swp
 
 # Running/debugging
